@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inventaire</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#EDF1F2">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Inventaire">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,600&family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --porcelain: #EDF1F2;
+    --tile: #FBFCFC;
+    --cobalt: #1F4E8C;
+    --cobalt-deep: #16335C;
+    --ink: #1B2733;
+    --sage: #6E8B6B;
+    --hairline: #C6D3DA;
+    --display: "Bodoni Moda", Georgia, serif;
+    --body: "Archivo", system-ui, -apple-system, sans-serif;
+    --dock-h: calc(74px + env(safe-area-inset-bottom, 0px));
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    margin: 0;
+    background: var(--porcelain);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.45;
+    padding-bottom: calc(var(--dock-h) + 18px);
+    overscroll-behavior-y: contain;
+  }
+
+  .wrap {
+    max-width: 860px; margin: 0 auto;
+    padding: max(20px, env(safe-area-inset-top)) 18px 0;
+  }
+
+  header { border-bottom: 1px solid var(--cobalt); padding-bottom: 14px; }
+  h1 {
+    font-family: var(--display); font-weight: 400;
+    font-size: clamp(38px, 9vw, 62px); line-height: 0.95;
+    margin: 0; letter-spacing: -0.01em; color: var(--cobalt-deep);
+  }
+  .kicker {
+    font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--cobalt); font-weight: 600; margin: 0 0 8px;
+  }
+  .lede { margin: 10px 0 0; max-width: 46ch; color: #44525F; font-size: 14px; }
+
+  .toolbar {
+    display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    padding: 12px 0 6px; border-bottom: 1px solid var(--hairline);
+    position: sticky; top: 0; background: var(--porcelain); z-index: 5;
+  }
+  .btn {
+    font-family: var(--body); font-size: 13px; font-weight: 500;
+    padding: 9px 14px; min-height: 44px;
+    border: 1px solid var(--hairline); background: var(--tile);
+    color: var(--ink); border-radius: 2px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--cobalt); color: var(--cobalt); }
+  .btn[aria-pressed="true"] { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
+  .btn.quiet { background: transparent; border-color: transparent; color: #6A7885; }
+  .spacer { flex: 1 1 auto; }
+
+  section { margin: 28px 0 0; }
+  .sec-head {
+    display: flex; align-items: baseline; gap: 10px;
+    border-bottom: 3px double var(--hairline); padding-bottom: 6px; margin-bottom: 12px;
+  }
+  .sec-head h2 {
+    font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase;
+    font-weight: 600; margin: 0; color: var(--ink);
+  }
+  .sec-count { font-size: 12px; color: var(--cobalt); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px; }
+
+  .tile {
+    position: relative; text-align: left;
+    font-family: var(--body); font-size: 14px; line-height: 1.25;
+    min-height: 60px; padding: 11px 11px; width: 100%;
+    background: var(--tile); color: var(--ink);
+    border: 1px solid var(--hairline); border-radius: 2px;
+    cursor: pointer; transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
+  }
+  .tile[aria-pressed="true"] {
+    background: var(--cobalt); border-color: var(--cobalt-deep); color: #fff;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22);
+  }
+  .tile:focus-visible, .btn:focus-visible, input:focus-visible {
+    outline: 2px solid var(--sage); outline-offset: 2px;
+  }
+  .kill {
+    position: absolute; top: -8px; right: -8px; width: 26px; height: 26px;
+    border-radius: 50%; border: 1px solid var(--hairline); background: #fff;
+    color: #8A5A52; font-size: 15px; line-height: 1; cursor: pointer; display: none;
+  }
+  body.editing .kill { display: block; }
+  body.editing .tile { pointer-events: none; }
+  body.editing .kill { pointer-events: auto; }
+
+  .add-row { display: none; gap: 6px; margin-top: 10px; }
+  body.editing .add-row { display: flex; }
+  .add-row input {
+    flex: 1 1 auto; font-family: var(--body); font-size: 16px; padding: 10px;
+    border: 1px solid var(--hairline); border-radius: 2px; background: var(--tile); color: var(--ink);
+  }
+
+  .list-group { margin: 24px 0 0; }
+  .list-item {
+    display: flex; align-items: center; gap: 12px; width: 100%;
+    padding: 15px 4px; min-height: 52px; background: none; border: 0;
+    border-bottom: 1px solid var(--hairline); text-align: left; cursor: pointer;
+    font-family: var(--body); font-size: 16px; color: var(--ink);
+  }
+  .box { width: 18px; height: 18px; flex: none; border: 1px solid var(--cobalt); border-radius: 1px; }
+  .list-item[aria-pressed="true"] { color: #93A1AC; }
+  .list-item[aria-pressed="true"] .label { text-decoration: line-through; }
+  .list-item[aria-pressed="true"] .box { background: var(--sage); border-color: var(--sage); }
+
+  .empty { padding: 46px 0; max-width: 34ch; }
+  .empty p { margin: 0 0 6px; }
+  .empty .big { font-family: var(--display); font-size: 26px; color: var(--cobalt-deep); }
+
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: rgba(237,241,242,0.96);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    border-top: 1px solid var(--hairline);
+    padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .dock-inner { max-width: 860px; margin: 0 auto; display: flex; gap: 10px; align-items: center; }
+  .primary {
+    flex: 1 1 auto; background: var(--cobalt); color: #fff; border: 1px solid var(--cobalt-deep);
+    font-size: 15px; font-weight: 600; min-height: 50px; border-radius: 2px; cursor: pointer;
+    font-family: var(--body);
+  }
+  .toast {
+    position: fixed; bottom: calc(var(--dock-h) + 16px); left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: #fff; font-size: 13px; padding: 10px 16px;
+    border-radius: 2px; opacity: 0; pointer-events: none; transition: opacity 200ms; z-index: 20;
+  }
+  .toast.on { opacity: 1; }
+  .hidden { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <p class="kicker">Kitchen staples</p>
+    <h1>Inventaire</h1>
+    <p class="lede" id="lede">Walk the fridge and pantry. Tap anything you're out of — it turns blue. The blue ones become your shopping list.</p>
+  </header>
+
+  <div class="toolbar" id="toolbar">
+    <button class="btn" id="editBtn" aria-pressed="false">Edit staples</button>
+    <span class="spacer"></span>
+    <button class="btn quiet" id="exportBtn">Back up</button>
+    <button class="btn quiet" id="importBtn">Restore</button>
+    <button class="btn quiet" id="clearBtn">Clear marks</button>
+  </div>
+
+  <main id="inventory"></main>
+
+  <div id="listView" class="hidden">
+    <div id="listBody"></div>
+  </div>
+</div>
+
+<div class="dock">
+  <div class="dock-inner">
+    <button class="primary" id="switchBtn">Show shopping list</button>
+    <button class="btn hidden" id="copyBtn">Copy</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const KEY = 'kitchen-inventory-v1';
+
+const SEED = [
+  ["Produce", ["Onions","Garlic","Shallots","Potatoes","Carrots","Celery","Lemons","Tomatoes","Bell peppers","Salad greens","Spinach","Broccoli","Zucchini","Mushrooms","Apples","Bananas","Berries","Avocado","Ginger","Fresh parsley","Fresh basil"]],
+  ["Fridge", ["Milk","Eggs","Butter","Heavy cream","Yogurt","Parmesan","Cheddar","Goat cheese","Sour cream","Orange juice"]],
+  ["Meat & fish", ["Chicken","Ground beef","Bacon","Sausage","Salmon","Shrimp","Canned tuna"]],
+  ["Pantry", ["Pasta","Rice","Lentils","Canned beans","Canned tomatoes","Chicken stock","Peanut butter","Honey","Oats","Nuts","Coffee","Tea","Tortillas"]],
+  ["Baking", ["All-purpose flour","Bread flour","Granulated sugar","Brown sugar","Powdered sugar","Baking powder","Baking soda","Active dry yeast","Vanilla extract","Cocoa powder","Chocolate chips","Cornstarch"]],
+  ["Oils & condiments", ["Olive oil","Neutral oil","Balsamic vinegar","Red wine vinegar","Soy sauce","Dijon mustard","Mayonnaise","Hot sauce","Maple syrup"]],
+  ["Spices", ["Kosher salt","Black pepper","Cumin","Paprika","Chili flakes","Cinnamon","Oregano","Thyme","Bay leaves","Herbes de Provence"]],
+  ["Freezer", ["Frozen peas","Frozen berries","Puff pastry","Ice cream"]],
+  ["Bread", ["Sandwich bread","Baguette"]],
+  ["Household", ["Dish soap","Sponges","Paper towels","Trash bags","Dishwasher pods","Laundry detergent","Foil","Parchment paper","Zip bags"]]
+];
+
+let state = null, mode = 'inventory';
+
+function freshState() {
+  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {} };
+}
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (parsed && Array.isArray(parsed.sections)) {
+      parsed.needed = parsed.needed || {};
+      parsed.got = parsed.got || {};
+      return parsed;
+    }
+  } catch (e) {}
+  return freshState();
+}
+
+function save() {
+  try { localStorage.setItem(KEY, JSON.stringify(state)); }
+  catch (e) { toast("Couldn't save — storage is blocked in this browser"); }
+}
+
+function neededCount() { return Object.values(state.needed).filter(Boolean).length; }
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('on');
+  setTimeout(() => t.classList.remove('on'), 2400);
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderInventory() {
+  const root = document.getElementById('inventory');
+  root.innerHTML = '';
+  state.sections.forEach((sec, si) => {
+    const el = document.createElement('section');
+    const need = sec.items.filter(i => state.needed[i]).length;
+
+    const head = document.createElement('div');
+    head.className = 'sec-head';
+    head.innerHTML = `<h2>${esc(sec.name)}</h2><span class="sec-count">${need ? need + ' needed' : ''}</span>`;
+    el.appendChild(head);
+
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    sec.items.forEach(item => {
+      const wrap = document.createElement('div');
+      wrap.style.position = 'relative';
+
+      const b = document.createElement('button');
+      b.className = 'tile'; b.type = 'button'; b.textContent = item;
+      b.setAttribute('aria-pressed', state.needed[item] ? 'true' : 'false');
+      b.setAttribute('aria-label', item + (state.needed[item] ? ' — needed' : ' — stocked'));
+      b.onclick = () => {
+        state.needed[item] = !state.needed[item];
+        if (!state.needed[item]) delete state.got[item];
+        save(); renderInventory(); updateDock();
+      };
+
+      const k = document.createElement('button');
+      k.className = 'kill'; k.type = 'button'; k.textContent = '×';
+      k.setAttribute('aria-label', 'Remove ' + item);
+      k.onclick = (e) => {
+        e.stopPropagation();
+        sec.items = sec.items.filter(x => x !== item);
+        delete state.needed[item];
+        save(); renderInventory(); updateDock();
+      };
+
+      wrap.appendChild(b); wrap.appendChild(k);
+      grid.appendChild(wrap);
+    });
+    el.appendChild(grid);
+
+    const add = document.createElement('div');
+    add.className = 'add-row';
+    const input = document.createElement('input');
+    input.placeholder = 'Add to ' + sec.name.toLowerCase();
+    input.setAttribute('aria-label', 'Add an item to ' + sec.name);
+    const go = document.createElement('button');
+    go.className = 'btn'; go.type = 'button'; go.textContent = 'Add';
+    const commit = () => {
+      const v = input.value.trim();
+      if (!v) return;
+      if (!sec.items.includes(v)) sec.items.push(v);
+      input.value = '';
+      save(); renderInventory(); updateDock();
+      const inputs = document.querySelectorAll('.add-row input');
+      if (inputs[si]) inputs[si].focus();
+    };
+    go.onclick = commit;
+    input.onkeydown = (e) => { if (e.key === 'Enter') commit(); };
+    add.appendChild(input); add.appendChild(go);
+    el.appendChild(add);
+
+    root.appendChild(el);
+  });
+}
+
+function renderList() {
+  const body = document.getElementById('listBody');
+  body.innerHTML = '';
+  if (!neededCount()) {
+    body.innerHTML = `<div class="empty">
+      <p class="big">Nothing marked yet.</p>
+      <p>Go back, walk the kitchen, and tap whatever you're low on.</p></div>`;
+    return;
+  }
+  state.sections.forEach(sec => {
+    const items = sec.items.filter(i => state.needed[i]);
+    if (!items.length) return;
+    const g = document.createElement('div');
+    g.className = 'list-group';
+    g.innerHTML = `<div class="sec-head"><h2>${esc(sec.name)}</h2><span class="sec-count">${items.length}</span></div>`;
+    items.forEach(item => {
+      const b = document.createElement('button');
+      b.className = 'list-item'; b.type = 'button';
+      b.setAttribute('aria-pressed', state.got[item] ? 'true' : 'false');
+      b.innerHTML = `<span class="box"></span><span class="label">${esc(item)}</span>`;
+      b.onclick = () => { state.got[item] = !state.got[item]; save(); renderList(); };
+      g.appendChild(b);
+    });
+    body.appendChild(g);
+  });
+}
+
+function listAsText() {
+  const lines = [];
+  state.sections.forEach(sec => {
+    const items = sec.items.filter(i => state.needed[i]);
+    if (!items.length) return;
+    lines.push(sec.name.toUpperCase());
+    items.forEach(i => lines.push('- ' + i));
+    lines.push('');
+  });
+  return lines.join('\n').trim();
+}
+
+function updateDock() {
+  const n = neededCount();
+  const btn = document.getElementById('switchBtn');
+  const copy = document.getElementById('copyBtn');
+  if (mode === 'inventory') {
+    btn.textContent = n ? `Show shopping list · ${n}` : 'Show shopping list';
+    copy.classList.add('hidden');
+  } else {
+    btn.textContent = 'Back to inventory';
+    copy.classList.toggle('hidden', n === 0);
+  }
+}
+
+function setMode(next) {
+  mode = next;
+  const inv = mode === 'inventory';
+  document.getElementById('inventory').classList.toggle('hidden', !inv);
+  document.getElementById('toolbar').classList.toggle('hidden', !inv);
+  document.getElementById('listView').classList.toggle('hidden', inv);
+  document.getElementById('lede').textContent = inv
+    ? "Walk the fridge and pantry. Tap anything you're out of — it turns blue. The blue ones become your shopping list."
+    : "Check things off as they go in the cart. Your marks stay until you clear them.";
+  if (inv) renderInventory(); else renderList();
+  updateDock();
+  window.scrollTo(0, 0);
+}
+
+document.getElementById('switchBtn').onclick = () => setMode(mode === 'inventory' ? 'list' : 'inventory');
+
+document.getElementById('editBtn').onclick = (e) => {
+  const on = document.body.classList.toggle('editing');
+  e.currentTarget.setAttribute('aria-pressed', on ? 'true' : 'false');
+  e.currentTarget.textContent = on ? 'Done editing' : 'Edit staples';
+};
+
+document.getElementById('clearBtn').onclick = () => {
+  state.needed = {}; state.got = {};
+  save(); renderInventory(); updateDock();
+  toast('All marks cleared');
+};
+
+document.getElementById('exportBtn').onclick = async () => {
+  const text = JSON.stringify(state);
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Inventaire backup', text }); return; } catch (e) {}
+  }
+  try { await navigator.clipboard.writeText(text); toast('Backup copied — paste it somewhere safe'); }
+  catch (e) { toast("Couldn't copy the backup"); }
+};
+
+document.getElementById('importBtn').onclick = () => {
+  const raw = prompt('Paste a backup to replace everything on this device:');
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed.sections)) throw new Error('wrong shape');
+    parsed.needed = parsed.needed || {};
+    parsed.got = parsed.got || {};
+    state = parsed;
+    save(); renderInventory(); updateDock();
+    toast('Restored');
+  } catch (e) {
+    toast("That doesn't look like a backup — nothing changed");
+  }
+};
+
+document.getElementById('copyBtn').onclick = async () => {
+  const text = listAsText();
+  if (navigator.share) {
+    try { await navigator.share({ title: 'Shopping list', text }); return; } catch (e) {}
+  }
+  try { await navigator.clipboard.writeText(text); toast('Shopping list copied'); }
+  catch (e) { toast("Couldn't copy — try selecting the text"); }
+};
+
+state = load();
+renderInventory();
+updateDock();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>
