@@ -209,6 +209,43 @@
   .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
   .dialog-actions .complete { width: auto; }
 
+  /* Receipts */
+  .receipt-cta { margin: 26px 0 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .receipt-cta p { margin: 0; font-size: 12px; color: #6A7885; flex: 1 1 180px; }
+  .hist-bar { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 0 4px; }
+  .spend { margin: 14px 0 0; padding: 12px 14px; background: var(--tile); border: 1px solid var(--hairline); border-radius: 2px; font-size: 14px; }
+  .spend b { font-variant-numeric: tabular-nums; color: var(--cobalt-deep); }
+  .trip-store { margin: 2px 0 0; font-size: 12px; color: #6A7885; letter-spacing: 0.02em; }
+  .price { font-variant-numeric: tabular-nums; color: #6A7885; }
+  .list-item .lp { margin-left: auto; font-size: 13px; color: #6A7885; font-variant-numeric: tabular-nums; }
+  .list-item[aria-pressed="true"] .lp { color: #B3BEC6; }
+
+  .r-head { margin: 20px 0 6px; display: grid; gap: 10px; }
+  .r-head label { display: grid; gap: 4px; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 600; color: #6A7885; }
+  .field {
+    font-family: var(--body); font-size: 16px; padding: 10px; width: 100%;
+    border: 1px solid var(--hairline); border-radius: 2px; background: var(--tile); color: var(--ink);
+  }
+  select.field { padding: 9px 8px; }
+  .r-check { margin: 14px 0 0; padding: 11px 13px; font-size: 13px; border-radius: 2px; border: 1px solid var(--hairline); background: var(--tile); }
+  .r-check.ok { border-color: var(--sage); color: #44613F; }
+  .r-check.warn { border-color: #C8A04A; color: #6E5520; background: #FBF6EA; }
+  .rline { border-bottom: 1px solid var(--hairline); padding: 14px 0; display: grid; gap: 8px; }
+  .rl-top { display: flex; align-items: center; gap: 10px; }
+  .rl-raw { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 13px; color: #44525F; flex: 1 1 auto; overflow-wrap: anywhere; }
+  .rl-price { width: 92px; flex: none; text-align: right; font-variant-numeric: tabular-nums; }
+  .rl-new { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .rl-new .full { grid-column: 1 / -1; }
+  .rl-new label.chk { display: flex; align-items: center; gap: 8px; font-size: 14px; min-height: 36px; }
+  .rl-new label.chk input { width: 20px; height: 20px; accent-color: var(--cobalt); }
+  .rl-guess { font-size: 12px; color: #8A6A2A; }
+  .rline.skip .rl-raw, .rline.skip .rl-price { opacity: 0.45; text-decoration: line-through; }
+
+  dialog.confirm .field { margin: 10px 0 4px; }
+  dialog.confirm a { color: var(--cobalt); }
+  .busy-dots::after { content: ''; animation: dots 1.4s steps(4) infinite; }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -238,17 +275,33 @@
       <button class="complete" id="completeBtn" type="button">Complete trip</button>
       <p class="complete-hint" id="completeHint"></p>
     </div>
+    <div class="receipt-cta">
+      <button class="btn" id="scanBtnList" type="button">Scan receipt</button>
+      <p>Or skip checking off: scan your receipt and it records the trip for you.</p>
+    </div>
   </div>
 
   <div id="historyView" class="hidden">
+    <div class="hist-bar">
+      <button class="btn" id="scanBtnHist" type="button">Scan receipt</button>
+      <button class="btn quiet" id="keyBtn" type="button">Receipt settings</button>
+    </div>
+    <div id="spend"></div>
     <div id="historyBody"></div>
   </div>
+
+  <div id="receiptView" class="hidden">
+    <div id="receiptBody"></div>
+  </div>
+
+  <input type="file" accept="image/*" id="receiptFile" hidden>
 </div>
 
 <div class="dock">
   <div class="dock-inner">
     <button class="primary" id="switchBtn">Show shopping list</button>
     <button class="btn hidden" id="copyBtn">Copy</button>
+    <button class="btn hidden" id="cancelBtn" type="button">Cancel</button>
   </div>
 </div>
 
@@ -263,7 +316,26 @@
   </div>
 </dialog>
 
+<dialog class="confirm" id="keySheet">
+  <h3>Receipt reading</h3>
+  <p>Inventaire reads receipts with Claude, using your own Anthropic API key. Each receipt costs a few cents on your API account, and the photo is sent to Anthropic to be read.</p>
+  <p>The key stays on this phone. It isn't included in backups.</p>
+  <input class="field" id="keyInput" type="password" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Anthropic API key">
+  <p id="keyNote"><a href="https://platform.claude.com/" target="_blank" rel="noopener">Get a key at platform.claude.com</a> under Settings → API keys.</p>
+  <div class="dialog-actions">
+    <button class="btn quiet" id="keyRemove" type="button">Remove key</button>
+    <button class="btn" id="keyCancel" type="button">Cancel</button>
+    <button class="complete" id="keySave" type="button">Save</button>
+  </div>
+</dialog>
+
+<dialog class="confirm" id="busy">
+  <h3>Reading receipt<span class="busy-dots"></span></h3>
+  <p>This usually takes 15–40 seconds. Keep the app open.</p>
+</dialog>
+
 <script src="suggest.js"></script>
+<script src="receipt.js"></script>
 
 <script>
 const KEY = 'kitchen-inventory-v1';
@@ -281,10 +353,12 @@ const SEED = [
   ["Household", ["Dish soap","Sponges","Paper towels","Trash bags","Dishwasher pods","Laundry detergent","Foil","Parchment paper","Zip bags"]]
 ];
 
-let state = null, mode = 'inventory';
+let state = null, mode = 'inventory', draft = null;
+const DRAFT_KEY = 'inventaire-receipt-draft';
+const money = n => '$' + (Math.round(n * 100) / 100).toFixed(2);
 
 function freshState() {
-  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {} };
+  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {}, receiptMap: {} };
 }
 
 function load() {
@@ -304,6 +378,7 @@ function normalize(s) {
   s.got = s.got || {};
   s.history = Array.isArray(s.history) ? s.history : [];
   s.wildAdded = s.wildAdded || {};
+  s.receiptMap = s.receiptMap || {};
   return s;
 }
 
@@ -330,8 +405,9 @@ function toast(msg, action) {
 }
 
 // Promise-based confirmation sheet. Resolves true only on an explicit yes.
-function confirmSheet({ title, body, yes, danger }) {
+function confirmSheet({ title, body, yes, danger, no }) {
   const d = document.getElementById('confirm');
+  document.getElementById('confirmNo').classList.toggle('hidden', no === false);
   document.getElementById('confirmTitle').textContent = title;
   document.getElementById('confirmBody').innerHTML = body;
   const ok = document.getElementById('confirmYes');
@@ -360,6 +436,7 @@ function toggleNeeded(item) {
   save(); renderInventory(); updateDock();
 }
 
+// Wild cards and recurring receipt items become staples when tapped.
 function takeWildcard(w) {
   const inList = state.sections.some(sec => sec.items.includes(w.name));
   if (!inList) {
@@ -400,7 +477,8 @@ function renderSuggestions(root, analysis) {
   grid.className = 'grid sugg-grid';
   suggestions.forEach(sg => {
     const b = suggestTile(sg.name, sg.reason, false);
-    b.onclick = () => toggleNeeded(sg.name);
+    b.onclick = () => sg.newStaple && !state.sections.some(x => x.items.includes(sg.name))
+      ? takeWildcard(sg) : toggleNeeded(sg.name);
     grid.appendChild(b);
   });
   if (wildcard) {
@@ -502,7 +580,11 @@ function renderList() {
       const b = document.createElement('button');
       b.className = 'list-item'; b.type = 'button';
       b.setAttribute('aria-pressed', state.got[item] ? 'true' : 'false');
-      b.innerHTML = `<span class="box"></span><span class="label">${esc(item)}</span>`;
+      const lp = Suggest.lastPrice(state.history, item);
+      const lpText = !lp ? '' : lp.unitPrice && lp.unit && lp.unit !== 'ea'
+        ? `${money(lp.unitPrice)}/${lp.unit}` : money(lp.price / (lp.qty || 1));
+      b.innerHTML = `<span class="box"></span><span class="label">${esc(item)}</span>`
+        + (lpText ? `<span class="lp" title="Last price paid">${esc(lpText)}</span>` : '');
       b.onclick = () => { state.got[item] = !state.got[item]; save(); renderList(); };
       g.appendChild(b);
     });
@@ -567,9 +649,30 @@ function fmtDate(ms) {
   return d.toLocaleDateString(undefined, opts);
 }
 
+function renderSpend() {
+  const el = document.getElementById('spend');
+  const byMonth = new Map();
+  state.history.forEach(t => {
+    if (!t.receipt || typeof t.receipt.total !== 'number') return;
+    const d = new Date(t.date), k = d.getFullYear() * 12 + d.getMonth();
+    const m = byMonth.get(k) || { total: 0, trips: 0, d };
+    m.total += t.receipt.total; m.trips++;
+    byMonth.set(k, m);
+  });
+  if (!byMonth.size) { el.innerHTML = ''; return; }
+  const now = new Date(), k = now.getFullYear() * 12 + now.getMonth();
+  const name = d => d.toLocaleDateString(undefined, { month: 'long' });
+  const cur = byMonth.get(k), prev = byMonth.get(k - 1);
+  const parts = [];
+  parts.push(cur ? `${name(now)} so far: <b>${money(cur.total)}</b> on ${plural(cur.trips, 'receipt')}` : `Nothing scanned yet in ${name(now)}`);
+  if (prev) parts.push(`${name(prev.d)}: <b>${money(prev.total)}</b>`);
+  el.innerHTML = `<div class="spend">${parts.join(' · ')}</div>`;
+}
+
 function renderHistory() {
   const body = document.getElementById('historyBody');
   body.innerHTML = '';
+  renderSpend();
   if (!state.history.length) {
     body.innerHTML = `<div class="empty">
       <p class="big">No trips yet.</p>
@@ -579,11 +682,15 @@ function renderHistory() {
   state.history.slice().reverse().forEach(trip => {
     const el = document.createElement('div');
     el.className = 'trip';
+    const rc = trip.receipt;
     el.innerHTML = `<div class="trip-head">
         <span class="trip-date">${esc(fmtDate(trip.date))}</span>
-        <span class="trip-count">${plural(trip.items.length, 'item')}</span>
+        <span class="trip-count">${plural(trip.items.length, 'item')}${rc && rc.total ? ' · ' + money(rc.total) : ''}</span>
       </div>
-      <p class="trip-items">${trip.items.map(i => esc(i.name)).join(', ')}</p>`;
+      ${rc && rc.store ? `<p class="trip-store">${esc(rc.store)}${rc.location ? ' · ' + esc(rc.location) : ''}</p>` : ''}
+      <p class="trip-items">${trip.items.map(i => esc(i.name)
+        + (i.qty > 1 ? ' ×' + i.qty : '')
+        + (typeof i.price === 'number' ? ` <span class="price">${money(i.price)}</span>` : '')).join(', ')}</p>`;
     const del = document.createElement('button');
     del.className = 'btn quiet trip-del'; del.type = 'button'; del.textContent = 'Delete';
     del.setAttribute('aria-label', 'Delete trip from ' + fmtDate(trip.date));
@@ -604,6 +711,308 @@ function renderHistory() {
   });
 }
 
+// ---------- Receipts ----------
+
+function openKeySheet() {
+  const d = document.getElementById('keySheet');
+  const input = document.getElementById('keyInput');
+  const note = document.getElementById('keyNote');
+  const had = !!Receipt.getKey();
+  input.value = '';
+  input.placeholder = had ? 'A key is saved · paste a new one to replace it' : 'sk-ant-…';
+  document.getElementById('keyRemove').classList.toggle('hidden', !had);
+  const noteHtml = note.innerHTML;
+  return new Promise(resolve => {
+    const done = v => { d.close(); note.innerHTML = noteHtml; resolve(v); };
+    document.getElementById('keySave').onclick = () => {
+      const k = input.value.trim();
+      if (!k && had) return done(true);
+      if (!/^sk-ant-[\w-]{20,}$/.test(k)) {
+        note.innerHTML = 'That doesn\'t look like an API key. It starts with <b>sk-ant-</b>.';
+        return;
+      }
+      if (!Receipt.setKey(k)) { note.textContent = 'Couldn\'t save the key: storage is blocked in this browser.'; return; }
+      toast('API key saved on this phone');
+      done(true);
+    };
+    document.getElementById('keyCancel').onclick = () => done(false);
+    document.getElementById('keyRemove').onclick = () => { Receipt.setKey(''); toast('API key removed'); done(false); };
+    d.oncancel = e => { e.preventDefault(); done(false); };
+    d.showModal();
+  });
+}
+
+async function scanReceipt() {
+  if (!Receipt.getKey()) {
+    const ok = await openKeySheet();
+    if (!ok || !Receipt.getKey()) return;
+  }
+  const f = document.getElementById('receiptFile');
+  f.value = '';
+  f.click();
+}
+
+function saveDraft() {
+  try { draft ? localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)) : localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+}
+
+function storeKey(store) { return (store || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+
+function stapleSection(name) {
+  const sec = state.sections.find(x => x.items.includes(name));
+  return sec ? sec.name : null;
+}
+
+function findStaple(name) {
+  if (!name) return null;
+  const low = name.toLowerCase();
+  for (const sec of state.sections) for (const i of sec.items) if (i.toLowerCase() === low) return i;
+  return null;
+}
+
+// "2026-10-06T18:17" (local) -> ms, or null
+function parseLocal(str) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/.exec(str || '');
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3], m[4] ? +m[4] : 12, m[5] ? +m[5] : 0);
+  return isNaN(d) ? null : d.getTime();
+}
+function toLocalInput(ms) {
+  const d = new Date(ms), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function draftFrom(out) {
+  const sk = storeKey(out.store);
+  const sectionNames = state.sections.map(x => x.name);
+  let when = parseLocal(out.purchased_at);
+  if (!when || when > Date.now() + DAY_MS || when < Date.now() - 400 * DAY_MS) when = Date.now();
+  return {
+    store: out.store || '', location: out.store_location || '',
+    when: toLocalInput(when),
+    total: Number(out.total) || 0, tax: Number(out.tax) || 0,
+    itemCount: Number.isInteger(out.item_count) ? out.item_count : null,
+    lines: out.lines.map(l => {
+      const raw = String(l.raw || l.name || '').trim();
+      const line = {
+        raw, price: Number(l.price) || 0, qty: Number(l.qty) > 0 ? Number(l.qty) : 1,
+        unitPrice: typeof l.unit_price === 'number' ? l.unit_price : null, unit: l.unit || null,
+        confident: l.confident !== false,
+        name: String(l.name || raw).trim(),
+        section: sectionNames.includes(l.section) ? l.section : (sectionNames.includes('Pantry') ? 'Pantry' : sectionNames[0]),
+        addStaple: false, choice: 'new', staple: null
+      };
+      const remembered = state.receiptMap[sk + '|' + raw.toUpperCase()];
+      const matched = findStaple(l.match);
+      if (remembered) {
+        Object.assign(line, remembered, { confident: true });
+        if (line.choice === 'staple' && !findStaple(line.staple)) line.choice = 'new';
+        // Remembered as a new item that has since become a staple.
+        if (line.choice === 'new' && findStaple(line.name)) { line.choice = 'staple'; line.staple = findStaple(line.name); }
+      } else if (matched) {
+        line.choice = 'staple'; line.staple = matched;
+      } else if (l.kind === 'fee') {
+        line.choice = 'skip';
+      }
+      return line;
+    })
+  };
+}
+
+const DAY_MS = 864e5;
+
+document.getElementById('receiptFile').onchange = async (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+  const busy = document.getElementById('busy');
+  busy.oncancel = ev => ev.preventDefault();
+  busy.showModal();
+  try {
+    const out = await Receipt.read(file, state.sections);
+    draft = draftFrom(out);
+    saveDraft();
+    busy.close();
+    setMode('receipt');
+  } catch (err) {
+    busy.close();
+    const code = err && err.code;
+    if (code === 'nokey' || code === 'badkey') {
+      await confirmSheet({ title: code === 'badkey' ? 'Key rejected' : 'API key needed', body: `<p>${esc(err.message)}</p>`, yes: 'OK', no: false });
+      openKeySheet();
+    } else {
+      await confirmSheet({ title: 'Couldn\'t read that receipt', body: `<p>${esc((err && err.message) || 'Something went wrong.')}</p>`, yes: 'OK', no: false });
+    }
+  }
+};
+
+function receiptCheck() {
+  const sum = draft.lines.reduce((a, l) => a + (Number(l.price) || 0), 0);
+  const expect = draft.total - draft.tax;
+  const ok = Math.abs(sum - expect) < 0.015;
+  const qtySum = draft.lines.reduce((a, l) => a + (l.unit && l.unit !== 'ea' ? 1 : l.qty), 0);
+  const countOk = draft.itemCount == null || draft.itemCount === draft.lines.length || draft.itemCount === qtySum;
+  if (!draft.total) return { cls: 'warn', text: `Lines add up to ${money(sum)}. No total was found on the receipt to check against.` };
+  if (ok && countOk) return { cls: 'ok', text: `✓ Lines add up to ${money(sum)}${draft.tax ? ' + ' + money(draft.tax) + ' tax' : ''}, matching the ${money(draft.total)} total.` };
+  if (ok) return { cls: 'ok', text: `✓ Lines add up to the ${money(draft.total)} total.` };
+  const diff = expect - sum;
+  return { cls: 'warn', text: `Lines add up to ${money(sum)}, but the receipt says ${money(expect)}${draft.tax ? ' before tax' : ''} (${diff > 0 ? money(diff) + ' missing' : money(-diff) + ' extra'}). A line may have been missed, doubled or misread. You can fix prices below.` };
+}
+
+function renderReceipt() {
+  const body = document.getElementById('receiptBody');
+  if (!draft) { body.innerHTML = ''; return; }
+  const sectionOpts = sel => state.sections.map(x => `<option${x.name === sel ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+  const stapleOpts = sel => state.sections.map(x =>
+    `<optgroup label="${esc(x.name)}">${x.items.map(i => `<option value="s:${esc(i)}"${'s:' + i === sel ? ' selected' : ''}>${esc(i)}</option>`).join('')}</optgroup>`).join('');
+
+  const chk = receiptCheck();
+  body.innerHTML = `
+    <div class="r-head">
+      <label>Store<input class="field" id="rStore" value="${esc(draft.store)}" placeholder="Store name"></label>
+      <label>When<input class="field" id="rWhen" type="datetime-local" value="${esc(draft.when)}"></label>
+    </div>
+    <div class="r-check ${chk.cls}" id="rCheck">${esc(chk.text)}</div>
+    <div class="sec-head" style="margin-top:22px"><h2>Lines</h2><span class="sec-count">${draft.lines.length} · ${money(draft.total)}</span></div>
+    <div id="rLines"></div>`;
+
+  document.getElementById('rStore').oninput = e => { draft.store = e.target.value; saveDraft(); };
+  document.getElementById('rWhen').onchange = e => { draft.when = e.target.value; saveDraft(); };
+
+  const wrap = document.getElementById('rLines');
+  draft.lines.forEach((l, idx) => {
+    const row = document.createElement('div');
+    row.className = 'rline' + (l.choice === 'skip' ? ' skip' : '');
+    const val = l.choice === 'staple' ? 's:' + l.staple : '__' + l.choice;
+    const qtyNote = l.unitPrice && l.unit && l.unit !== 'ea' ? ` · ${money(l.unitPrice)}/${l.unit}` : (l.qty > 1 ? ` · ×${l.qty}` : '');
+    row.innerHTML = `
+      <div class="rl-top">
+        <span class="rl-raw">${esc(l.raw)}${esc(qtyNote)}</span>
+        <input class="field rl-price" inputmode="decimal" value="${(Number(l.price) || 0).toFixed(2)}" aria-label="Price for ${esc(l.raw)}">
+      </div>
+      <select class="field rl-choice" aria-label="What is ${esc(l.raw)}?">
+        ${stapleOpts(val)}
+        <optgroup label="Not a staple">
+          <option value="__new"${val === '__new' ? ' selected' : ''}>New item: ${esc(l.name)}</option>
+          <option value="__skip"${val === '__skip' ? ' selected' : ''}>Ignore this line</option>
+        </optgroup>
+      </select>
+      ${l.choice === 'new' ? `<div class="rl-new">
+          <input class="field full rl-name" value="${esc(l.name)}" aria-label="Item name">
+          <select class="field rl-sec" aria-label="Category">${sectionOpts(l.section)}</select>
+          <label class="chk"><input type="checkbox" class="rl-add"${l.addStaple ? ' checked' : ''}> Add to staples</label>
+        </div>` : ''}
+      ${!l.confident && l.choice !== 'skip' ? `<span class="rl-guess">Best guess at this abbreviation. Worth a check.</span>` : ''}`;
+
+    row.querySelector('.rl-price').onchange = e => {
+      const v = parseFloat(String(e.target.value).replace(/[^0-9.\-]/g, ''));
+      l.price = isNaN(v) ? 0 : v;
+      e.target.value = l.price.toFixed(2);
+      saveDraft();
+      const c = receiptCheck(), el = document.getElementById('rCheck');
+      el.className = 'r-check ' + c.cls; el.textContent = c.text;
+    };
+    row.querySelector('.rl-choice').onchange = e => {
+      const v = e.target.value;
+      if (v.startsWith('s:')) { l.choice = 'staple'; l.staple = v.slice(2); }
+      else l.choice = v.slice(2);
+      l.confident = true;
+      saveDraft(); renderReceipt();
+    };
+    const nm = row.querySelector('.rl-name');
+    if (nm) {
+      nm.oninput = e => { l.name = e.target.value; saveDraft(); };
+      row.querySelector('.rl-sec').onchange = e => { l.section = e.target.value; saveDraft(); };
+      row.querySelector('.rl-add').onchange = e => { l.addStaple = e.target.checked; saveDraft(); };
+    }
+    wrap.appendChild(row);
+  });
+}
+
+async function cancelReceipt() {
+  const ok = await confirmSheet({
+    title: 'Discard this receipt?',
+    body: '<p>Nothing from it will be saved. You can scan it again later.</p>',
+    yes: 'Discard', danger: true
+  });
+  if (!ok) return;
+  draft = null; saveDraft();
+  setMode('history');
+}
+
+function saveReceipt() {
+  if (!draft) return;
+  const lines = draft.lines.filter(l => l.choice !== 'skip');
+  if (draft.lines.some(l => l.choice === 'new' && !String(l.name).trim())) {
+    toast('Give each new item a name, or ignore it');
+    return;
+  }
+  const before = JSON.stringify(state);
+  const sk = storeKey(draft.store);
+
+  // Remember every decision for this store's next receipt.
+  draft.lines.forEach(l => {
+    const mem = { choice: l.choice };
+    if (l.choice === 'staple') mem.staple = l.staple;
+    if (l.choice === 'new') { mem.name = l.name.trim(); mem.section = l.section; mem.addStaple = l.addStaple; }
+    state.receiptMap[sk + '|' + l.raw.toUpperCase()] = mem;
+  });
+
+  // Combine lines that are the same item (two cans, two ham packs...).
+  const items = new Map();
+  lines.forEach(l => {
+    let name, section;
+    if (l.choice === 'staple') { name = l.staple; section = stapleSection(name) || l.section; }
+    else {
+      name = findStaple(l.name.trim()) || l.name.trim();
+      section = stapleSection(name) || l.section;
+      if (l.addStaple && !stapleSection(name)) {
+        const sec = state.sections.find(x => x.name === section) || state.sections[0];
+        sec.items.push(name);
+      }
+    }
+    const isWeighed = l.unit && l.unit !== 'ea';
+    const it = items.get(name) || { name, section, qty: 0, price: 0 };
+    it.qty += isWeighed ? 1 : l.qty;
+    it.price = Math.round((it.price + (Number(l.price) || 0)) * 100) / 100;
+    if (l.unitPrice) { it.unitPrice = l.unitPrice; it.unit = l.unit; }
+    items.set(name, it);
+  });
+
+  const when = parseLocal(draft.when) || Date.now();
+  const receipt = { store: draft.store.trim(), location: draft.location, total: draft.total, tax: draft.tax };
+
+  // A trip already completed within 12 hours is the same trip: add prices to it.
+  let trip = state.history.find(t => !t.receipt && Math.abs(t.date - when) < 12 * 36e5);
+  if (trip) {
+    items.forEach(it => {
+      const ex = trip.items.find(x => x.name === it.name);
+      if (ex) Object.assign(ex, it); else trip.items.push(it);
+    });
+    trip.receipt = receipt;
+  } else {
+    trip = { id: Date.now().toString(36), date: when, items: [...items.values()], receipt };
+    state.history.push(trip);
+    state.history.sort((a, b) => a.date - b.date);
+  }
+
+  // Anything on the shopping list that's on the receipt has been bought.
+  items.forEach(it => { delete state.needed[it.name]; delete state.got[it.name]; delete state.wildAdded[it.name]; });
+
+  const savedDraft = draft;
+  draft = null; saveDraft();
+  save();
+  setMode('history');
+  toast(`Receipt saved · ${money(receipt.total || 0)}`, {
+    label: 'Undo',
+    fn: () => { state = normalize(JSON.parse(before)); draft = savedDraft; saveDraft(); save(); setMode('receipt'); toast('Back to reviewing your receipt'); }
+  });
+}
+
+document.getElementById('scanBtnList').onclick = scanReceipt;
+document.getElementById('scanBtnHist').onclick = scanReceipt;
+document.getElementById('keyBtn').onclick = () => openKeySheet();
+document.getElementById('cancelBtn').onclick = cancelReceipt;
+
 function listAsText() {
   const lines = [];
   state.sections.forEach(sec => {
@@ -620,8 +1029,12 @@ function updateDock() {
   const n = neededCount();
   const btn = document.getElementById('switchBtn');
   const copy = document.getElementById('copyBtn');
+  document.getElementById('cancelBtn').classList.toggle('hidden', mode !== 'receipt');
   if (mode === 'inventory') {
     btn.textContent = n ? `Show shopping list · ${n}` : 'Show shopping list';
+    copy.classList.add('hidden');
+  } else if (mode === 'receipt') {
+    btn.textContent = 'Save to history';
     copy.classList.add('hidden');
   } else {
     btn.textContent = 'Back to inventory';
@@ -636,17 +1049,23 @@ function setMode(next) {
   document.getElementById('toolbar').classList.toggle('hidden', !inv);
   document.getElementById('listView').classList.toggle('hidden', mode !== 'list');
   document.getElementById('historyView').classList.toggle('hidden', mode !== 'history');
+  document.getElementById('receiptView').classList.toggle('hidden', mode !== 'receipt');
   document.getElementById('lede').textContent = {
     inventory: "Walk the fridge and pantry. Tap anything you're out of — it turns blue. The blue ones become your shopping list.",
     list: "Check things off as they go in the cart. When you're done, complete the trip.",
-    history: "Your past trips. Suggestions learn from these."
+    history: "Your past trips. Suggestions learn from these.",
+    receipt: "Check how each line was matched. Your choices are remembered for this store's next receipt."
   }[mode];
-  if (inv) renderInventory(); else if (mode === 'list') renderList(); else renderHistory();
+  if (inv) renderInventory(); else if (mode === 'list') renderList();
+  else if (mode === 'receipt') renderReceipt(); else renderHistory();
   updateDock();
   window.scrollTo(0, 0);
 }
 
-document.getElementById('switchBtn').onclick = () => setMode(mode === 'inventory' ? 'list' : 'inventory');
+document.getElementById('switchBtn').onclick = () => {
+  if (mode === 'receipt') return saveReceipt();
+  setMode(mode === 'inventory' ? 'list' : 'inventory');
+};
 document.getElementById('historyBtn').onclick = () => setMode('history');
 document.getElementById('completeBtn').onclick = completeTrip;
 
@@ -695,8 +1114,9 @@ document.getElementById('copyBtn').onclick = async () => {
 };
 
 state = load();
-renderInventory();
-updateDock();
+try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) { draft = null; }
+if (draft && Array.isArray(draft.lines)) setMode('receipt');
+else { draft = null; renderInventory(); updateDock(); }
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
@@ -705,7 +1125,7 @@ if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!hadController || reloaded || document.getElementById('confirm').open) return;
+    if (!hadController || reloaded || document.querySelector('dialog[open]')) return;
     reloaded = true;
     location.reload();
   });

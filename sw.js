@@ -1,8 +1,9 @@
-const CACHE = 'inventaire-v3';
+const CACHE = 'inventaire-v4';
 const CORE = [
   './',
   'index.html',
   'suggest.js',
+  'receipt.js',
   'manifest.webmanifest',
   'icon-192.png',
   'apple-touch-icon.png',

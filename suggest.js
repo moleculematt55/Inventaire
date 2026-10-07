@@ -164,24 +164,41 @@
     };
   }
 
-  function purchasesByItem(history, now) {
+  // name -> purchase dates (sorted); also fills qtys (name -> [{date, qty}])
+  // and sections (name -> last section it was recorded under).
+  function purchasesByItem(history, now, qtys, sections) {
     const map = new Map();
     for (const trip of history || []) {
       if (!trip || !Array.isArray(trip.items) || trip.date > now) continue;
       for (const it of trip.items) {
         if (!map.has(it.name)) map.set(it.name, []);
         map.get(it.name).push(trip.date);
+        if (qtys) {
+          if (!qtys.has(it.name)) qtys.set(it.name, []);
+          qtys.get(it.name).push({ date: trip.date, qty: it.qty > 0 ? it.qty : 1 });
+        }
+        if (sections && it.section) sections.set(it.name, it.section);
       }
     }
     for (const dates of map.values()) dates.sort((a, b) => a - b);
     return map;
   }
 
+  // Most recent price paid for an item, from receipts.
+  function lastPrice(history, name) {
+    for (let i = (history || []).length - 1; i >= 0; i--) {
+      const it = history[i].items.find(x => x.name === name && typeof x.price === 'number');
+      if (it) return { price: it.price, qty: it.qty || 1, unitPrice: it.unitPrice, unit: it.unit, store: history[i].receipt && history[i].receipt.store, date: history[i].date };
+    }
+    return null;
+  }
+
   function analyze(state, now) {
     now = now || Date.now();
     const month = new Date(now).getMonth() + 1;
     const history = state.history || [];
-    const buys = purchasesByItem(history, now);
+    const qtys = new Map(), lastSection = new Map();
+    const buys = purchasesByItem(history, now, qtys, lastSection);
 
     const sectionOf = new Map();
     state.sections.forEach(sec => sec.items.forEach(i => sectionOf.set(i, sec.name)));
@@ -220,8 +237,15 @@
       const spread = (days[n - 1] - days[0]) / DAY;
       const confidence = Math.min(1, spread / 21) * Math.min(1, (n - 1) / 3);
 
+      // Stocked up? Two gallons of milk last 'twice as long' as your usual one.
+      const q = (qtys.get(name) || []);
+      const lastDay = dayKey(days[n - 1]);
+      const lastQty = q.filter(x => dayKey(x.date) === lastDay).reduce((a, x) => a + x.qty, 0) || 1;
+      const usualQty = median(q.map(x => x.qty)) || 1;
+      const stock = Math.min(3, Math.max(1, lastQty / usualQty));
+
       const since = (now - days[n - 1]) / DAY;
-      const ratio = since / interval;
+      const ratio = since / (interval * stock);
       const due = dueCurve(ratio);
       if (!due) continue;
 
@@ -251,6 +275,18 @@
 
       suggestions.push({ name, section: sectionOf.get(name), score, reason });
     }
+    // Things from receipts that keep showing up but aren't in your staples.
+    for (const [name, dates] of buys) {
+      if (sectionOf.has(name)) continue;
+      const distinct = new Set(dates.map(dayKey)).size;
+      const last = dates[dates.length - 1];
+      if (distinct < 3 || now - last > 60 * DAY) continue;
+      suggestions.push({
+        name, section: lastSection.get(name) || 'Pantry', score: 0.45, newStaple: true,
+        reason: `On ${distinct} receipts · not in your staples yet`
+      });
+    }
+
     suggestions.sort((a, b) => b.score - a.score);
     suggestions.length = Math.min(suggestions.length, 8);
 
@@ -286,7 +322,7 @@
       .map(x => x.name);
   }
 
-  const api = { analyze, sortItems, seasonOf };
+  const api = { analyze, sortItems, seasonOf, lastPrice };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Suggest = api;
 })(typeof self !== 'undefined' ? self : this);
