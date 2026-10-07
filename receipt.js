@@ -80,10 +80,9 @@
   }
 
   // ---------- Request ----------
-  const TOOL = {
-    name: 'record_receipt',
-    description: 'Record every purchased line from a grocery receipt, matched to the shopper\'s staples.',
-    input_schema: {
+  // JSON schema for structured output. Every property is required and no
+  // nullable types are used: "none" is 0 or an empty string instead.
+  const SCHEMA = {
       type: 'object',
       properties: {
         store: { type: 'string', description: 'Store name as a shopper would say it, e.g. "Dave\'s Marketplace". Empty if unreadable.' },
@@ -91,7 +90,7 @@
         purchased_at: { type: 'string', description: 'Local date and time of purchase as YYYY-MM-DDTHH:MM, or YYYY-MM-DD if no time. Empty if not printed.' },
         total: { type: 'number', description: 'Final amount paid.' },
         tax: { type: 'number', description: 'Total tax, 0 if none.' },
-        item_count: { type: ['integer', 'null'], description: 'Item count if the receipt prints one, else null.' },
+        item_count: { type: 'integer', description: 'Item count if the receipt prints one, else 0.' },
         lines: {
           type: 'array',
           description: 'One entry per purchased line, in receipt order. A line printed twice (bought twice) appears twice.',
@@ -102,19 +101,20 @@
               name: { type: 'string', description: 'Plain, generic shopping-list name a person would write, e.g. "White cooking wine", "Steak", "Deli ham". No brand unless the brand is the product.' },
               qty: { type: 'number', description: 'Units on this line, e.g. 2 for "2 @ 1.99". Use 1 for weighed items.' },
               price: { type: 'number', description: 'Final price for this line after any discount printed against it.' },
-              unit_price: { type: ['number', 'null'], description: 'Price per unit or per lb/kg if printed (e.g. 3.99 for "0.23 lb @ 3.99 /lb"), else null.' },
-              unit: { type: ['string', 'null'], description: '"lb", "kg", "oz" or "ea" when unit_price is set, else null.' },
-              match: { type: ['string', 'null'], description: 'Exactly one of the shopper\'s staple names (copied character for character) if this line is that item, else null. Brands and sizes don\'t matter: "FAIRLIFE MILK WHL" is "Milk".' },
+              unit_price: { type: 'number', description: 'Price per unit or per lb/kg if printed (e.g. 3.99 for "0.23 lb @ 3.99 /lb"), else 0.' },
+              unit: { type: 'string', description: '"lb", "kg", "oz" or "ea" when unit_price is set, else "".' },
+              match: { type: 'string', description: 'Exactly one of the shopper\'s staple names (copied character for character) if this line is that item, else "". Brands and sizes don\'t matter: "FAIRLIFE MILK WHL" is "Milk".' },
               section: { type: 'string', description: 'Best category for this item, chosen from the shopper\'s category names.' },
               kind: { type: 'string', enum: ['grocery', 'household', 'fee', 'other'], description: '"fee" for bag fees, bottle deposits and similar.' },
               confident: { type: 'boolean', description: 'False if the abbreviation is ambiguous and the name is a guess.' }
             },
-            required: ['raw', 'name', 'qty', 'price', 'match', 'section', 'kind', 'confident']
+            required: ['raw', 'name', 'qty', 'price', 'unit_price', 'unit', 'match', 'section', 'kind', 'confident'],
+            additionalProperties: false
           }
         }
       },
-      required: ['store', 'purchased_at', 'total', 'tax', 'lines']
-    }
+      required: ['store', 'store_location', 'purchased_at', 'total', 'tax', 'item_count', 'lines'],
+      additionalProperties: false
   };
 
   function buildPrompt(sections, nSlices, today) {
@@ -122,7 +122,7 @@
     const sliceNote = nSlices > 1
       ? `The ${nSlices} images are consecutive sections of ONE long receipt, top to bottom. Neighboring sections overlap slightly, so a line near the bottom of one image may reappear at the top of the next: record it once. Two identical lines that both appear fully inside the same image are two separate purchases.\n\n`
       : '';
-    return `${sliceNote}Read this grocery receipt and record it with the record_receipt tool.
+    return `${sliceNote}Read this grocery receipt and record every purchased line.
 
 Decode store abbreviations into what the item actually is (e.g. "HOLL HSE WHITE CKN" is Holland House white cooking wine, "GRADE A LRG BRWN E" is large brown eggs). Discounts or coupons printed under an item reduce that item's price; don't list them as lines. Skip subtotal, tax, payment, change and savings lines.
 
@@ -163,8 +163,7 @@ ${staples}`;
         body: JSON.stringify({
           model: MODEL,
           max_tokens: 8000,
-          tools: [TOOL],
-          tool_choice: { type: 'tool', name: TOOL.name },
+          output_config: { format: { type: 'json_schema', schema: SCHEMA } },
           messages: [{ role: 'user', content }]
         })
       });
@@ -183,8 +182,10 @@ ${staples}`;
       throw new ReceiptError('api', 'Couldn\'t read the receipt' + (msg ? ': ' + msg : '.'));
     }
 
-    const use = body && Array.isArray(body.content) && body.content.find(c => c.type === 'tool_use');
-    const out = use && use.input;
+    if (body && body.stop_reason === 'max_tokens') throw new ReceiptError('parse', 'That receipt was too long to read in one go. Try photographing it in two halves.');
+    let out = null;
+    const text = body && Array.isArray(body.content) && body.content.filter(c => c.type === 'text').map(c => c.text).join('');
+    try { out = JSON.parse(String(text || '').replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch (e) {}
     if (!out || !Array.isArray(out.lines)) throw new ReceiptError('parse', 'Claude couldn\'t make sense of that photo. Try a straighter, closer shot in good light.');
     if (!out.lines.length) throw new ReceiptError('parse', 'No items found. Is that a grocery receipt?');
     return out;

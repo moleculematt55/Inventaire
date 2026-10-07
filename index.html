@@ -791,12 +791,13 @@ function draftFrom(out) {
     store: out.store || '', location: out.store_location || '',
     when: toLocalInput(when),
     total: Number(out.total) || 0, tax: Number(out.tax) || 0,
-    itemCount: Number.isInteger(out.item_count) ? out.item_count : null,
+    itemCount: Number.isInteger(out.item_count) && out.item_count > 0 ? out.item_count : null,
     lines: out.lines.map(l => {
       const raw = String(l.raw || l.name || '').trim();
       const line = {
         raw, price: Number(l.price) || 0, qty: Number(l.qty) > 0 ? Number(l.qty) : 1,
-        unitPrice: typeof l.unit_price === 'number' ? l.unit_price : null, unit: l.unit || null,
+        unitPrice: typeof l.unit_price === 'number' && l.unit_price > 0 ? l.unit_price : null,
+        unit: l.unit_price > 0 && l.unit ? l.unit : null,
         confident: l.confident !== false,
         name: String(l.name || raw).trim(),
         section: sectionNames.includes(l.section) ? l.section : (sectionNames.includes('Pantry') ? 'Pantry' : sectionNames[0]),
