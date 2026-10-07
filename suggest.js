@@ -193,6 +193,50 @@
     return null;
   }
 
+  // Categories whose contents keep for months: a bottle of soy sauce bought
+  // in August is probably still in the cupboard in October.
+  const LASTING = /spice|baking|oil|condiment|pantry|household|freezer|canned|dry/i;
+
+  function agoText(days) {
+    const d = Math.round(days);
+    if (d <= 0) return 'today';
+    if (d === 1) return 'yesterday';
+    if (d < 14) return d + ' days ago';
+    if (d < 60) return Math.round(d / 7) + ' weeks ago';
+    return Math.round(d / 30) + ' months ago';
+  }
+
+  // For a recipe ingredient: should it go on the list, and why?
+  //   isStaple: in the shopper's staples (and not a one-off item)
+  // Staples the shopper hasn't marked as out are treated as stocked when they
+  // keep for months; fresh things default to "buy" unless bought very recently
+  // or still within their usual buying rhythm.
+  function recipeNeed(state, name, section, isStaple, now) {
+    now = now || Date.now();
+    if (state.needed && state.needed[name]) return { need: false, onList: true, why: 'Already on your list' };
+    const lasting = LASTING.test(section || '');
+    const days = [];
+    for (const t of state.history || []) {
+      if (t.date > now || !t.items.some(i => i.name === name)) continue;
+      if (!days.length || dayKey(days[days.length - 1]) !== dayKey(t.date)) days.push(t.date);
+    }
+    days.sort((a, b) => a - b);
+    if (days.length) {
+      const since = (now - days[days.length - 1]) / DAY;
+      let limit = lasting ? 120 : 4;
+      if (days.length >= 3 && (days[days.length - 1] - days[0]) / DAY >= 21) {
+        const gaps = [];
+        for (let i = 1; i < days.length; i++) gaps.push((days[i] - days[i - 1]) / DAY);
+        limit = Math.max(2, median(gaps) * 0.6);
+      }
+      if (since < limit) return { need: false, why: 'Bought ' + agoText(since) };
+      if (isStaple && lasting) return { need: false, why: 'Staple · probably on hand' };
+      return { need: true, why: 'Last bought ' + agoText(since) };
+    }
+    if (isStaple && lasting) return { need: false, why: 'Staple · probably on hand' };
+    return { need: true, why: '' };
+  }
+
   function analyze(state, now) {
     now = now || Date.now();
     const month = new Date(now).getMonth() + 1;
@@ -283,7 +327,7 @@
       if (distinct < 3 || now - last > 60 * DAY) continue;
       suggestions.push({
         name, section: lastSection.get(name) || 'Pantry', score: 0.45, newStaple: true,
-        reason: `On ${distinct} receipts · not in your staples yet`
+        reason: `Bought on ${distinct} trips · not in your staples yet`
       });
     }
 
@@ -322,7 +366,7 @@
       .map(x => x.name);
   }
 
-  const api = { analyze, sortItems, seasonOf, lastPrice };
+  const api = { analyze, sortItems, seasonOf, lastPrice, recipeNeed };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Suggest = api;
 })(typeof self !== 'undefined' ? self : this);

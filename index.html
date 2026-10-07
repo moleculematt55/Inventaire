@@ -246,6 +246,36 @@
   .busy-dots::after { content: ''; animation: dots 1.4s steps(4) infinite; }
   @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
 
+  /* Recipes */
+  .box { display: grid; place-items: center; color: #fff; font-size: 12px; line-height: 1; }
+  [aria-pressed="true"] > .box::after { content: '✓'; }
+  .lbl { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .for { font-size: 12px; color: #6A7885; }
+  .list-item[aria-pressed="true"] .for { color: #B3BEC6; }
+  .list-item.pick[aria-pressed="true"] { color: var(--ink); }
+  .list-item.pick[aria-pressed="true"] .label { text-decoration: none; }
+  .list-item.pick[aria-pressed="true"] .box { background: var(--cobalt); border-color: var(--cobalt); }
+  .list-item.pick:disabled { color: #93A1AC; cursor: default; }
+  .list-item.pick:disabled .box { border-color: var(--hairline); }
+  .recipe-row {
+    display: block; width: 100%; text-align: left; background: none; border: 0;
+    border-bottom: 1px solid var(--hairline); padding: 16px 2px; cursor: pointer;
+    font-family: var(--body); color: var(--ink);
+  }
+  .recipe-row .t { display: block; font-family: var(--display); font-size: 22px; line-height: 1.15; color: var(--cobalt-deep); }
+  .recipe-row .m { display: block; font-size: 12px; color: #6A7885; margin-top: 4px; }
+  .recipe-row .on { color: #57704F; font-weight: 600; }
+  .r-title { font-family: var(--display); font-weight: 400; font-size: 34px; line-height: 1.05; margin: 22px 0 6px; color: var(--cobalt-deep); }
+  .r-meta { font-size: 13px; color: #6A7885; margin: 0; }
+  .r-actions { display: flex; gap: 4px; margin: 8px 0 0 -14px; }
+  .group-head { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--cobalt); font-weight: 600; margin: 18px 0 0; }
+  .steps { padding-left: 22px; margin: 12px 0 0; }
+  .steps li { margin: 0 0 12px; font-size: 15px; }
+  .steps li::marker { color: var(--cobalt); font-weight: 600; }
+  .rl-text { font-size: 15px; flex: 1 1 auto; overflow-wrap: anywhere; }
+  .sheet-btns { display: grid; gap: 8px; margin-top: 16px; }
+  .sheet-btns .complete, .sheet-btns .btn { width: 100%; }
+
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -261,6 +291,7 @@
   <div class="toolbar" id="toolbar">
     <button class="btn" id="editBtn" aria-pressed="false">Edit staples</button>
     <button class="btn" id="historyBtn">History</button>
+    <button class="btn" id="recipesBtn">Recipes</button>
     <span class="spacer"></span>
     <button class="btn quiet" id="exportBtn">Back up</button>
     <button class="btn quiet" id="importBtn">Restore</button>
@@ -284,7 +315,7 @@
   <div id="historyView" class="hidden">
     <div class="hist-bar">
       <button class="btn" id="scanBtnHist" type="button">Scan receipt</button>
-      <button class="btn quiet" id="keyBtn" type="button">Receipt settings</button>
+      <button class="btn quiet" id="keyBtn" type="button">API key</button>
     </div>
     <div id="spend"></div>
     <div id="historyBody"></div>
@@ -294,7 +325,25 @@
     <div id="receiptBody"></div>
   </div>
 
+  <div id="recipesView" class="hidden">
+    <div class="hist-bar">
+      <button class="btn" id="scanRecipeBtn" type="button">Scan recipe</button>
+      <button class="btn quiet" id="keyBtn2" type="button">API key</button>
+    </div>
+    <div id="recipesBody"></div>
+  </div>
+
+  <div id="recipeView" class="hidden">
+    <div id="recipeBody"></div>
+  </div>
+
+  <div id="recipeEditView" class="hidden">
+    <div id="recipeEditBody"></div>
+  </div>
+
   <input type="file" accept="image/*" id="receiptFile" hidden>
+  <input type="file" accept="image/*" capture="environment" id="recipeCam" hidden>
+  <input type="file" accept="image/*" multiple id="recipePick" hidden>
 </div>
 
 <div class="dock">
@@ -318,7 +367,7 @@
 
 <dialog class="confirm" id="keySheet">
   <h3>Receipt reading</h3>
-  <p>Inventaire reads receipts with Claude, using your own Anthropic API key. Each receipt costs a few cents on your API account, and the photo is sent to Anthropic to be read.</p>
+  <p>Inventaire reads receipts and recipes with Claude, using your own Anthropic API key. Each scan costs a few cents on your API account, and the photo is sent to Anthropic to be read.</p>
   <p>The key stays on this phone. It isn't included in backups.</p>
   <input class="field" id="keyInput" type="password" placeholder="sk-ant-…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Anthropic API key">
   <p id="keyNote"><a href="https://platform.claude.com/" target="_blank" rel="noopener">Get a key at platform.claude.com</a> under Settings → API keys.</p>
@@ -330,12 +379,27 @@
 </dialog>
 
 <dialog class="confirm" id="busy">
-  <h3>Reading receipt<span class="busy-dots"></span></h3>
+  <h3><span id="busyWhat">Reading receipt</span><span class="busy-dots"></span></h3>
   <p>This usually takes 15–40 seconds. Keep the app open.</p>
 </dialog>
 
+<dialog class="confirm" id="photoSheet">
+  <h3>Add a recipe</h3>
+  <p>Photograph the page with the ingredients: a cookbook, a recipe card or a screenshot all work.</p>
+  <p>If a recipe runs over two pages, choose both photos.</p>
+  <div class="sheet-btns">
+    <button class="complete" id="photoTake" type="button">Take a photo</button>
+    <button class="btn" id="photoPick" type="button">Choose photos</button>
+  </div>
+  <div class="dialog-actions">
+    <button class="btn quiet" id="photoCancel" type="button">Cancel</button>
+  </div>
+</dialog>
+
 <script src="suggest.js"></script>
+<script src="claude.js"></script>
 <script src="receipt.js"></script>
+<script src="recipe.js"></script>
 
 <script>
 const KEY = 'kitchen-inventory-v1';
@@ -353,12 +417,13 @@ const SEED = [
   ["Household", ["Dish soap","Sponges","Paper towels","Trash bags","Dishwasher pods","Laundry detergent","Foil","Parchment paper","Zip bags"]]
 ];
 
-let state = null, mode = 'inventory', draft = null;
+let state = null, mode = 'inventory', draft = null, rdraft = null, openRecipeId = null, picks = null;
 const DRAFT_KEY = 'inventaire-receipt-draft';
+const RDRAFT_KEY = 'inventaire-recipe-draft';
 const money = n => '$' + (Math.round(n * 100) / 100).toFixed(2);
 
 function freshState() {
-  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {}, receiptMap: {} };
+  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {}, receiptMap: {}, recipes: [], ingredientMap: {}, listFor: {} };
 }
 
 function load() {
@@ -379,6 +444,9 @@ function normalize(s) {
   s.history = Array.isArray(s.history) ? s.history : [];
   s.wildAdded = s.wildAdded || {};
   s.receiptMap = s.receiptMap || {};
+  s.recipes = Array.isArray(s.recipes) ? s.recipes : [];
+  s.ingredientMap = s.ingredientMap || {};
+  s.listFor = s.listFor || {};
   return s;
 }
 
@@ -423,27 +491,45 @@ function confirmSheet({ title, body, yes, danger, no }) {
   });
 }
 
+// One-off items (a wild card, a recipe ingredient you don't usually keep)
+// sit in a category only while they're on your list. Once bought or
+// unmarked they leave your staples; if you keep buying one, Suggested
+// offers it as a staple.
+function dropOneOff(name) {
+  if (!state.wildAdded[name]) return;
+  state.sections.forEach(sec => { sec.items = sec.items.filter(x => x !== name); });
+  delete state.wildAdded[name];
+}
+
+// Off the list: bought, unmarked or removed.
+function clearItem(name) {
+  delete state.needed[name];
+  delete state.got[name];
+  delete state.listFor[name];
+  dropOneOff(name);
+}
+
+function forText(name) {
+  const notes = state.listFor[name];
+  if (!notes || !notes.length) return '';
+  return 'for ' + notes.map(n => n.recipe + (n.amount ? ' · ' + n.amount : '')).join('; ');
+}
+
 function toggleNeeded(item) {
-  state.needed[item] = !state.needed[item];
-  if (!state.needed[item]) {
-    delete state.got[item];
-    // A wild card you changed your mind about doesn't stay in your staples.
-    if (state.wildAdded[item]) {
-      state.sections.forEach(sec => { sec.items = sec.items.filter(x => x !== item); });
-      delete state.wildAdded[item];
-    }
-  }
+  if (state.needed[item]) clearItem(item);
+  else state.needed[item] = true;
   save(); renderInventory(); updateDock();
 }
 
-// Wild cards and recurring receipt items become staples when tapped.
-function takeWildcard(w) {
+// Wild cards go on the list as one-off items. Things you keep buying that
+// aren't staples yet ("Bought on 3 trips") become staples when tapped.
+function takeWildcard(w, permanent) {
   const inList = state.sections.some(sec => sec.items.includes(w.name));
   if (!inList) {
     const sec = state.sections.find(x => x.name === w.section)
       || state.sections.find(x => x.name === 'Produce') || state.sections[0];
     sec.items.push(w.name);
-    state.wildAdded[w.name] = true;
+    if (!permanent) state.wildAdded[w.name] = true;
   }
   toggleNeeded(w.name);
 }
@@ -478,7 +564,7 @@ function renderSuggestions(root, analysis) {
   suggestions.forEach(sg => {
     const b = suggestTile(sg.name, sg.reason, false);
     b.onclick = () => sg.newStaple && !state.sections.some(x => x.items.includes(sg.name))
-      ? takeWildcard(sg) : toggleNeeded(sg.name);
+      ? takeWildcard(sg, true) : toggleNeeded(sg.name);
     grid.appendChild(b);
   });
   if (wildcard) {
@@ -513,7 +599,9 @@ function renderInventory() {
       wrap.style.position = 'relative';
 
       const b = document.createElement('button');
-      b.className = 'tile'; b.type = 'button'; b.textContent = item;
+      b.className = 'tile'; b.type = 'button';
+      const ft = forText(item);
+      b.innerHTML = esc(item) + (ft ? `<span class="why">${esc(ft)}</span>` : '');
       b.setAttribute('aria-pressed', state.needed[item] ? 'true' : 'false');
       b.setAttribute('aria-label', item + (state.needed[item] ? ' — needed' : ' — stocked'));
       b.onclick = () => toggleNeeded(item);
@@ -524,9 +612,7 @@ function renderInventory() {
       k.onclick = (e) => {
         e.stopPropagation();
         sec.items = sec.items.filter(x => x !== item);
-        delete state.needed[item];
-        delete state.got[item];
-        delete state.wildAdded[item];
+        clearItem(item);
         save(); renderInventory(); updateDock();
       };
 
@@ -583,7 +669,9 @@ function renderList() {
       const lp = Suggest.lastPrice(state.history, item);
       const lpText = !lp ? '' : lp.unitPrice && lp.unit && lp.unit !== 'ea'
         ? `${money(lp.unitPrice)}/${lp.unit}` : money(lp.price / (lp.qty || 1));
-      b.innerHTML = `<span class="box"></span><span class="label">${esc(item)}</span>`
+      const ft = forText(item);
+      b.innerHTML = `<span class="box"></span><span class="lbl"><span class="label">${esc(item)}</span>`
+        + (ft ? `<span class="for">${esc(ft)}</span>` : '') + `</span>`
         + (lpText ? `<span class="lp" title="Last price paid">${esc(lpText)}</span>` : '');
       b.onclick = () => { state.got[item] = !state.got[item]; save(); renderList(); };
       g.appendChild(b);
@@ -633,7 +721,7 @@ async function completeTrip() {
   const before = JSON.stringify(state);
   const now = Date.now();
   state.history.push({ id: now.toString(36), date: now, items: bought });
-  bought.forEach(b => { delete state.needed[b.name]; delete state.got[b.name]; delete state.wildAdded[b.name]; });
+  bought.forEach(b => clearItem(b.name));
   save();
   setMode('inventory');
   toast(`Trip saved · ${plural(bought.length, 'item')}`, {
@@ -717,7 +805,7 @@ function openKeySheet() {
   const d = document.getElementById('keySheet');
   const input = document.getElementById('keyInput');
   const note = document.getElementById('keyNote');
-  const had = !!Receipt.getKey();
+  const had = !!Claude.getKey();
   input.value = '';
   input.placeholder = had ? 'A key is saved · paste a new one to replace it' : 'sk-ant-…';
   document.getElementById('keyRemove').classList.toggle('hidden', !had);
@@ -731,21 +819,21 @@ function openKeySheet() {
         note.innerHTML = 'That doesn\'t look like an API key. It starts with <b>sk-ant-</b>.';
         return;
       }
-      if (!Receipt.setKey(k)) { note.textContent = 'Couldn\'t save the key: storage is blocked in this browser.'; return; }
+      if (!Claude.setKey(k)) { note.textContent = 'Couldn\'t save the key: storage is blocked in this browser.'; return; }
       toast('API key saved on this phone');
       done(true);
     };
     document.getElementById('keyCancel').onclick = () => done(false);
-    document.getElementById('keyRemove').onclick = () => { Receipt.setKey(''); toast('API key removed'); done(false); };
+    document.getElementById('keyRemove').onclick = () => { Claude.setKey(''); toast('API key removed'); done(false); };
     d.oncancel = e => { e.preventDefault(); done(false); };
     d.showModal();
   });
 }
 
 async function scanReceipt() {
-  if (!Receipt.getKey()) {
+  if (!Claude.getKey()) {
     const ok = await openKeySheet();
-    if (!ok || !Receipt.getKey()) return;
+    if (!ok || !Claude.getKey()) return;
   }
   const f = document.getElementById('receiptFile');
   f.value = '';
@@ -825,9 +913,7 @@ const DAY_MS = 864e5;
 document.getElementById('receiptFile').onchange = async (e) => {
   const file = e.target.files && e.target.files[0];
   if (!file) return;
-  const busy = document.getElementById('busy');
-  busy.oncancel = ev => ev.preventDefault();
-  busy.showModal();
+  const busy = showBusy('receipt');
   try {
     const out = await Receipt.read(file, state.sections);
     draft = draftFrom(out);
@@ -836,15 +922,27 @@ document.getElementById('receiptFile').onchange = async (e) => {
     setMode('receipt');
   } catch (err) {
     busy.close();
-    const code = err && err.code;
-    if (code === 'nokey' || code === 'badkey') {
-      await confirmSheet({ title: code === 'badkey' ? 'Key rejected' : 'API key needed', body: `<p>${esc(err.message)}</p>`, yes: 'OK', no: false });
-      openKeySheet();
-    } else {
-      await confirmSheet({ title: 'Couldn\'t read that receipt', body: `<p>${esc((err && err.message) || 'Something went wrong.')}</p>`, yes: 'OK', no: false });
-    }
+    showAIError(err, 'receipt');
   }
 };
+
+async function showAIError(err, what) {
+  const code = err && err.code;
+  if (code === 'nokey' || code === 'badkey') {
+    await confirmSheet({ title: code === 'badkey' ? 'Key rejected' : 'API key needed', body: `<p>${esc(err.message)}</p>`, yes: 'OK', no: false });
+    openKeySheet();
+  } else {
+    await confirmSheet({ title: `Couldn't read that ${what}`, body: `<p>${esc((err && err.message) || 'Something went wrong.')}</p>`, yes: 'OK', no: false });
+  }
+}
+
+function showBusy(what) {
+  document.getElementById('busyWhat').textContent = 'Reading ' + what;
+  const busy = document.getElementById('busy');
+  busy.oncancel = ev => ev.preventDefault();
+  busy.showModal();
+  return busy;
+}
 
 function receiptCheck() {
   const sum = draft.lines.reduce((a, l) => a + (Number(l.price) || 0), 0);
@@ -966,6 +1064,7 @@ function saveReceipt() {
     else {
       name = findStaple(l.name.trim()) || l.name.trim();
       section = stapleSection(name) || l.section;
+      if (l.addStaple) delete state.wildAdded[name]; // keep it: it's a staple now
       if (l.addStaple && !stapleSection(name)) {
         const sec = state.sections.find(x => x.name === section) || state.sections[0];
         sec.items.push(name);
@@ -997,7 +1096,7 @@ function saveReceipt() {
   }
 
   // Anything on the shopping list that's on the receipt has been bought.
-  items.forEach(it => { delete state.needed[it.name]; delete state.got[it.name]; delete state.wildAdded[it.name]; });
+  items.forEach(it => clearItem(it.name));
 
   const savedDraft = draft;
   draft = null; saveDraft();
@@ -1012,7 +1111,342 @@ function saveReceipt() {
 document.getElementById('scanBtnList').onclick = scanReceipt;
 document.getElementById('scanBtnHist').onclick = scanReceipt;
 document.getElementById('keyBtn').onclick = () => openKeySheet();
-document.getElementById('cancelBtn').onclick = cancelReceipt;
+document.getElementById('cancelBtn').onclick = () => {
+  if (mode === 'receipt') return cancelReceipt();
+  if (mode === 'recipeEdit') return cancelRecipeEdit();
+  if (mode === 'recipe') return setMode('recipes');
+};
+
+// ---------- Recipes ----------
+
+const ingKey = n => String(n || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+function saveRDraft() {
+  try { rdraft ? localStorage.setItem(RDRAFT_KEY, JSON.stringify(rdraft)) : localStorage.removeItem(RDRAFT_KEY); } catch (e) {}
+}
+
+async function scanRecipe() {
+  if (!Claude.getKey()) {
+    const ok = await openKeySheet();
+    if (!ok || !Claude.getKey()) return;
+  }
+  const d = document.getElementById('photoSheet');
+  const pick = id => { d.close(); const f = document.getElementById(id); f.value = ''; f.click(); };
+  document.getElementById('photoTake').onclick = () => pick('recipeCam');
+  document.getElementById('photoPick').onclick = () => pick('recipePick');
+  document.getElementById('photoCancel').onclick = () => d.close();
+  d.showModal();
+}
+
+function rdraftFrom(out) {
+  const sectionNames = state.sections.map(x => x.name);
+  const fallback = sectionNames.includes('Pantry') ? 'Pantry' : sectionNames[0];
+  return {
+    id: null,
+    title: String(out.title || '').trim(),
+    servings: String(out.servings || '').trim(),
+    source: String(out.source || '').trim(),
+    steps: (out.steps || []).map(x => String(x).trim()).filter(Boolean),
+    ingredients: out.ingredients.map(g => {
+      const name = String(g.name || g.text || '').trim();
+      const ing = {
+        text: String(g.text || name).trim(), name, key: ingKey(name),
+        amount: String(g.amount || '').trim(), optional: !!g.optional, group: String(g.group || '').trim(),
+        section: sectionNames.includes(g.section) ? g.section : fallback,
+        choice: 'new', staple: null
+      };
+      const mem = state.ingredientMap[ing.key];
+      const matched = findStaple(g.match) || findStaple(name);
+      if (mem) {
+        ing.choice = mem.choice;
+        if (mem.section) ing.section = mem.section;
+        if (mem.name) ing.name = mem.name;
+        if (mem.choice === 'staple') {
+          ing.staple = findStaple(mem.staple);
+          if (!ing.staple) ing.choice = matched ? 'staple' : 'new', ing.staple = matched;
+        }
+      } else if (g.shop === false) ing.choice = 'skip';
+      else if (matched) { ing.choice = 'staple'; ing.staple = matched; }
+      return ing;
+    })
+  };
+}
+
+async function readRecipeFiles(e) {
+  const files = [...(e.target.files || [])].slice(0, 4);
+  if (!files.length) return;
+  const busy = showBusy('recipe');
+  try {
+    const out = await Recipe.read(files, state.sections);
+    rdraft = rdraftFrom(out);
+    saveRDraft();
+    busy.close();
+    setMode('recipeEdit');
+  } catch (err) {
+    busy.close();
+    showAIError(err, 'recipe');
+  }
+}
+document.getElementById('recipeCam').onchange = readRecipeFiles;
+document.getElementById('recipePick').onchange = readRecipeFiles;
+
+function renderRecipeEdit() {
+  const body = document.getElementById('recipeEditBody');
+  if (!rdraft) { body.innerHTML = ''; return; }
+  const sectionOpts = sel => state.sections.map(x => `<option${x.name === sel ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+  const stapleOpts = sel => state.sections.map(x =>
+    `<optgroup label="${esc(x.name)}">${x.items.filter(i => !state.wildAdded[i]).map(i => `<option value="s:${esc(i)}"${'s:' + i === sel ? ' selected' : ''}>${esc(i)}</option>`).join('')}</optgroup>`).join('');
+
+  body.innerHTML = `
+    <div class="r-head">
+      <label>Recipe<input class="field" id="reTitle" value="${esc(rdraft.title)}" placeholder="Recipe name"></label>
+      <label>Serves<input class="field" id="reServes" value="${esc(rdraft.servings)}" placeholder="e.g. 4"></label>
+    </div>
+    <div class="sec-head" style="margin-top:22px"><h2>Ingredients</h2><span class="sec-count">${rdraft.ingredients.length}</span></div>
+    <div id="reLines"></div>
+    ${rdraft.steps.length ? `<div class="sec-head" style="margin-top:26px"><h2>Steps</h2><span class="sec-count">${rdraft.steps.length}</span></div>
+      <ol class="steps">${rdraft.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}`;
+
+  document.getElementById('reTitle').oninput = e => { rdraft.title = e.target.value; saveRDraft(); };
+  document.getElementById('reServes').oninput = e => { rdraft.servings = e.target.value; saveRDraft(); };
+
+  const wrap = document.getElementById('reLines');
+  let lastGroup = '';
+  rdraft.ingredients.forEach(ing => {
+    if (ing.group && ing.group !== lastGroup) {
+      const h = document.createElement('p'); h.className = 'group-head'; h.textContent = ing.group;
+      wrap.appendChild(h);
+    }
+    lastGroup = ing.group;
+    const row = document.createElement('div');
+    row.className = 'rline' + (ing.choice === 'skip' ? ' skip' : '');
+    const val = ing.choice === 'staple' ? 's:' + ing.staple : '__' + ing.choice;
+    row.innerHTML = `
+      <div class="rl-top"><span class="rl-text">${esc(ing.text)}${ing.optional ? ' <span class="for">(optional)</span>' : ''}</span></div>
+      <select class="field rl-choice" aria-label="What to buy for ${esc(ing.text)}">
+        ${stapleOpts(val)}
+        <optgroup label="Not a staple">
+          <option value="__new"${val === '__new' ? ' selected' : ''}>New item: ${esc(ing.name)}</option>
+          <option value="__skip"${val === '__skip' ? ' selected' : ''}>Never shop for this</option>
+        </optgroup>
+      </select>
+      ${ing.choice === 'new' ? `<div class="rl-new">
+          <input class="field rl-name" value="${esc(ing.name)}" aria-label="Item name">
+          <select class="field rl-sec" aria-label="Category">${sectionOpts(ing.section)}</select>
+        </div>` : ''}`;
+    row.querySelector('.rl-choice').onchange = e => {
+      const v = e.target.value;
+      if (v.startsWith('s:')) { ing.choice = 'staple'; ing.staple = v.slice(2); }
+      else ing.choice = v.slice(2);
+      saveRDraft(); renderRecipeEdit();
+    };
+    const nm = row.querySelector('.rl-name');
+    if (nm) {
+      nm.oninput = e => { ing.name = e.target.value; saveRDraft(); };
+      row.querySelector('.rl-sec').onchange = e => { ing.section = e.target.value; saveRDraft(); };
+    }
+    wrap.appendChild(row);
+  });
+}
+
+async function cancelRecipeEdit() {
+  const editing = rdraft && rdraft.id;
+  const ok = await confirmSheet({
+    title: editing ? 'Discard your changes?' : 'Discard this recipe?',
+    body: editing ? '<p>The recipe stays as it was.</p>' : '<p>Nothing will be saved. You can scan it again later.</p>',
+    yes: 'Discard', danger: true
+  });
+  if (!ok) return;
+  const id = rdraft && rdraft.id;
+  rdraft = null; saveRDraft();
+  if (id && state.recipes.some(r => r.id === id)) openRecipe(id); else setMode('recipes');
+}
+
+function saveRecipe() {
+  if (!rdraft) return;
+  if (rdraft.ingredients.some(i => i.choice === 'new' && !String(i.name).trim())) {
+    toast('Give each new item a name, or set it to never shop for');
+    return;
+  }
+  // Remember each choice, so the same ingredient in the next recipe is matched the same way.
+  rdraft.ingredients.forEach(i => {
+    if (!i.key) return;
+    const mem = { choice: i.choice, section: i.section };
+    if (i.choice === 'staple') mem.staple = i.staple;
+    if (i.choice === 'new' && ingKey(i.name) !== i.key) mem.name = i.name.trim();
+    state.ingredientMap[i.key] = mem;
+  });
+  const recipe = {
+    id: rdraft.id || Date.now().toString(36),
+    title: rdraft.title.trim() || 'Untitled recipe',
+    servings: rdraft.servings.trim(), source: rdraft.source,
+    ingredients: rdraft.ingredients.map(i => ({ ...i, name: String(i.name).trim() })),
+    steps: rdraft.steps
+  };
+  const idx = state.recipes.findIndex(r => r.id === recipe.id);
+  if (idx >= 0) { recipe.added = state.recipes[idx].added; recipe.lastUsed = state.recipes[idx].lastUsed; state.recipes[idx] = recipe; }
+  else { recipe.added = Date.now(); state.recipes.push(recipe); }
+  rdraft = null; saveRDraft();
+  save();
+  openRecipe(recipe.id);
+  toast(idx >= 0 ? 'Recipe updated' : 'Recipe saved');
+}
+
+// What an ingredient puts on the list right now: {name, section, isStaple}, or null.
+function resolveIng(ing) {
+  if (ing.choice === 'skip') return null;
+  if (ing.choice === 'staple') {
+    const n = findStaple(ing.staple);
+    if (n) return { name: n, section: stapleSection(n), isStaple: !state.wildAdded[n] };
+  }
+  const nm = String(ing.name || '').trim();
+  if (!nm) return null;
+  const st = findStaple(nm);
+  const name = st || nm;
+  return { name, section: stapleSection(name) || ing.section, isStaple: !!st && !state.wildAdded[st] };
+}
+
+function recipeUsage(r) {
+  const on = new Set();
+  Object.entries(state.listFor).forEach(([item, notes]) => {
+    if (state.needed[item] && notes.some(n => n.recipe === r.title)) on.add(item);
+  });
+  return on.size;
+}
+
+function renderRecipes() {
+  const body = document.getElementById('recipesBody');
+  body.innerHTML = '';
+  if (!state.recipes.length) {
+    body.innerHTML = `<div class="empty">
+      <p class="big">No recipes yet.</p>
+      <p>Tap Scan recipe and photograph one from a cookbook, a recipe card or a screenshot. Then pick it here whenever you want to cook it, and what you need goes on your list.</p></div>`;
+    return;
+  }
+  state.recipes.slice()
+    .sort((a, b) => (b.lastUsed || b.added || 0) - (a.lastUsed || a.added || 0))
+    .forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'recipe-row'; b.type = 'button';
+      const onList = recipeUsage(r);
+      const meta = [plural(r.ingredients.length, 'ingredient')];
+      if (r.servings) meta.push('Serves ' + r.servings);
+      b.innerHTML = `<span class="t">${esc(r.title)}</span><span class="m">${esc(meta.join(' · '))}`
+        + (onList ? ` · <span class="on">${plural(onList, 'item')} on your list</span>` : '') + `</span>`;
+      b.onclick = () => openRecipe(r.id);
+      body.appendChild(b);
+    });
+}
+
+// Opening a recipe pre-checks what you probably need and leaves out what
+// you probably have (see Suggest.recipeNeed).
+function openRecipe(id) {
+  openRecipeId = id;
+  const r = state.recipes.find(x => x.id === id);
+  if (!r) return setMode('recipes');
+  picks = r.ingredients.map(ing => {
+    const res = resolveIng(ing);
+    if (!res) return { on: false, disabled: true, why: 'Not shopped for' };
+    const need = Suggest.recipeNeed(state, res.name, res.section, res.isStaple);
+    if (ing.optional) return { on: false, why: ['Optional', need.why].filter(Boolean).join(' · ') };
+    return { on: need.need, why: need.why };
+  });
+  setMode('recipe');
+}
+
+function renderRecipe() {
+  const body = document.getElementById('recipeBody');
+  const r = state.recipes.find(x => x.id === openRecipeId);
+  if (!r) { body.innerHTML = ''; return; }
+  const meta = [];
+  if (r.servings) meta.push('Serves ' + r.servings);
+  if (r.source) meta.push(r.source);
+  body.innerHTML = `
+    <h2 class="r-title">${esc(r.title)}</h2>
+    ${meta.length ? `<p class="r-meta">${esc(meta.join(' · '))}</p>` : ''}
+    <div class="r-actions">
+      <button class="btn quiet" id="rEdit" type="button">Edit</button>
+      <button class="btn quiet" id="rDelete" type="button">Delete</button>
+    </div>
+    <div class="sec-head" style="margin-top:14px"><h2>Ingredients</h2><span class="sec-count">${picks.filter(p => p.on).length} to buy</span></div>
+    <div id="rIngs"></div>
+    ${r.steps.length ? `<div class="sec-head" style="margin-top:28px"><h2>Steps</h2></div>
+      <ol class="steps">${r.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}`;
+
+  const wrap = document.getElementById('rIngs');
+  let lastGroup = '';
+  r.ingredients.forEach((ing, i) => {
+    if (ing.group && ing.group !== lastGroup) {
+      const h = document.createElement('p'); h.className = 'group-head'; h.textContent = ing.group;
+      wrap.appendChild(h);
+    }
+    lastGroup = ing.group;
+    const p = picks[i];
+    const b = document.createElement('button');
+    b.className = 'list-item pick'; b.type = 'button';
+    b.disabled = !!p.disabled;
+    b.setAttribute('aria-pressed', p.on ? 'true' : 'false');
+    b.innerHTML = `<span class="box"></span><span class="lbl"><span class="label">${esc(ing.text)}</span>`
+      + (p.why ? `<span class="for">${esc(p.why)}</span>` : '') + `</span>`;
+    b.onclick = () => { p.on = !p.on; renderRecipe(); updateDock(); };
+    wrap.appendChild(b);
+  });
+
+  document.getElementById('rEdit').onclick = () => {
+    rdraft = JSON.parse(JSON.stringify({ ...r, ingredients: r.ingredients }));
+    saveRDraft();
+    setMode('recipeEdit');
+  };
+  document.getElementById('rDelete').onclick = async () => {
+    const ok = await confirmSheet({ title: 'Delete this recipe?', body: `<p>${esc(r.title)} will be removed from your recipes. Anything already on your list stays there.</p>`, yes: 'Delete', danger: true });
+    if (!ok) return;
+    const idx = state.recipes.indexOf(r);
+    state.recipes.splice(idx, 1);
+    save(); setMode('recipes');
+    toast('Recipe deleted', { label: 'Undo', fn: () => { state.recipes.splice(idx, 0, r); save(); openRecipe(r.id); } });
+  };
+}
+
+function addRecipeToList() {
+  const r = state.recipes.find(x => x.id === openRecipeId);
+  if (!r || !picks) return;
+  const merged = new Map();
+  r.ingredients.forEach((ing, i) => {
+    if (!picks[i].on) return;
+    const res = resolveIng(ing);
+    if (!res) return;
+    const m = merged.get(res.name) || { section: res.section, amounts: [] };
+    if (ing.amount) m.amounts.push(ing.amount);
+    merged.set(res.name, m);
+  });
+  if (!merged.size) return;
+  const before = JSON.stringify(state);
+  merged.forEach((m, name) => {
+    if (!stapleSection(name)) {
+      const sec = state.sections.find(x => x.name === m.section)
+        || state.sections.find(x => x.name === 'Pantry') || state.sections[0];
+      sec.items.push(name);
+      state.wildAdded[name] = true;
+    }
+    state.needed[name] = true;
+    delete state.got[name];
+    const notes = state.listFor[name] || (state.listFor[name] = []);
+    const amount = m.amounts.join(' + ');
+    const ex = notes.find(n => n.recipe === r.title);
+    if (ex) ex.amount = amount; else notes.push({ recipe: r.title, amount });
+  });
+  r.lastUsed = Date.now();
+  save();
+  setMode('recipes');
+  toast(`Added ${plural(merged.size, 'item')} for ${r.title}`, {
+    label: 'Undo',
+    fn: () => { state = normalize(JSON.parse(before)); save(); openRecipe(r.id); }
+  });
+}
+
+document.getElementById('recipesBtn').onclick = () => setMode('recipes');
+document.getElementById('scanRecipeBtn').onclick = scanRecipe;
+document.getElementById('keyBtn2').onclick = () => openKeySheet();
 
 function listAsText() {
   const lines = [];
@@ -1020,7 +1454,10 @@ function listAsText() {
     const items = sec.items.filter(i => state.needed[i]);
     if (!items.length) return;
     lines.push(sec.name.toUpperCase());
-    items.forEach(i => lines.push('- ' + i));
+    items.forEach(i => {
+      const notes = state.listFor[i] || [];
+      lines.push('- ' + i + (notes.length ? ` (${notes.map(n => (n.amount ? n.amount + ', ' : '') + n.recipe).join('; ')})` : ''));
+    });
     lines.push('');
   });
   return lines.join('\n').trim();
@@ -1030,8 +1467,22 @@ function updateDock() {
   const n = neededCount();
   const btn = document.getElementById('switchBtn');
   const copy = document.getElementById('copyBtn');
-  document.getElementById('cancelBtn').classList.toggle('hidden', mode !== 'receipt');
-  if (mode === 'inventory') {
+  const cancel = document.getElementById('cancelBtn');
+  cancel.classList.toggle('hidden', !['receipt', 'recipeEdit', 'recipe'].includes(mode));
+  cancel.textContent = mode === 'recipe' ? 'Back' : 'Cancel';
+  btn.disabled = false;
+  if (mode === 'recipe') {
+    const k = picks ? picks.filter(p => p.on).length : 0;
+    btn.textContent = k ? `Add ${k} to shopping list` : 'Nothing checked to add';
+    btn.disabled = !k;
+    copy.classList.add('hidden');
+  } else if (mode === 'recipeEdit') {
+    btn.textContent = 'Save recipe';
+    copy.classList.add('hidden');
+  } else if (mode === 'recipes') {
+    btn.textContent = n ? `Show shopping list · ${n}` : 'Back to inventory';
+    copy.classList.add('hidden');
+  } else if (mode === 'inventory') {
     btn.textContent = n ? `Show shopping list · ${n}` : 'Show shopping list';
     copy.classList.add('hidden');
   } else if (mode === 'receipt') {
@@ -1051,20 +1502,33 @@ function setMode(next) {
   document.getElementById('listView').classList.toggle('hidden', mode !== 'list');
   document.getElementById('historyView').classList.toggle('hidden', mode !== 'history');
   document.getElementById('receiptView').classList.toggle('hidden', mode !== 'receipt');
+  document.getElementById('recipesView').classList.toggle('hidden', mode !== 'recipes');
+  document.getElementById('recipeView').classList.toggle('hidden', mode !== 'recipe');
+  document.getElementById('recipeEditView').classList.toggle('hidden', mode !== 'recipeEdit');
   document.getElementById('lede').textContent = {
     inventory: "Walk the fridge and pantry. Tap anything you're out of — it turns blue. The blue ones become your shopping list.",
     list: "Check things off as they go in the cart. When you're done, complete the trip.",
     history: "Your past trips. Suggestions learn from these.",
-    receipt: "Check how each line was matched. Your choices are remembered for this store's next receipt."
+    receipt: "Check how each line was matched. Your choices are remembered for this store's next receipt.",
+    recipes: "Pick a recipe to put what you need for it on your shopping list.",
+    recipe: "Checked ingredients go on your list. Things you probably have are left unchecked. Tap to change.",
+    recipeEdit: "Check how each ingredient was matched to your staples. Your choices are remembered for the next recipe."
   }[mode];
   if (inv) renderInventory(); else if (mode === 'list') renderList();
-  else if (mode === 'receipt') renderReceipt(); else renderHistory();
+  else if (mode === 'receipt') renderReceipt();
+  else if (mode === 'recipes') renderRecipes();
+  else if (mode === 'recipe') renderRecipe();
+  else if (mode === 'recipeEdit') renderRecipeEdit();
+  else renderHistory();
   updateDock();
   window.scrollTo(0, 0);
 }
 
 document.getElementById('switchBtn').onclick = () => {
   if (mode === 'receipt') return saveReceipt();
+  if (mode === 'recipeEdit') return saveRecipe();
+  if (mode === 'recipe') return addRecipeToList();
+  if (mode === 'recipes') return setMode(neededCount() ? 'list' : 'inventory');
   setMode(mode === 'inventory' ? 'list' : 'inventory');
 };
 document.getElementById('historyBtn').onclick = () => setMode('history');
@@ -1077,7 +1541,8 @@ document.getElementById('editBtn').onclick = (e) => {
 };
 
 document.getElementById('clearBtn').onclick = () => {
-  state.needed = {}; state.got = {};
+  Object.keys(state.wildAdded).forEach(dropOneOff);
+  state.needed = {}; state.got = {}; state.listFor = {};
   save(); renderInventory(); updateDock();
   toast('All marks cleared');
 };
@@ -1116,7 +1581,10 @@ document.getElementById('copyBtn').onclick = async () => {
 
 state = load();
 try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) { draft = null; }
+try { rdraft = JSON.parse(localStorage.getItem(RDRAFT_KEY) || 'null'); } catch (e) { rdraft = null; }
+if (!(rdraft && Array.isArray(rdraft.ingredients))) rdraft = null;
 if (draft && Array.isArray(draft.lines)) setMode('receipt');
+else if (rdraft) { draft = null; setMode('recipeEdit'); }
 else { draft = null; renderInventory(); updateDock(); }
 
 if ('serviceWorker' in navigator) {
