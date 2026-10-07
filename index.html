@@ -154,8 +154,60 @@
     background: var(--ink); color: #fff; font-size: 13px; padding: 10px 16px;
     border-radius: 2px; opacity: 0; pointer-events: none; transition: opacity 200ms; z-index: 20;
   }
-  .toast.on { opacity: 1; }
+  .toast.on { opacity: 1; pointer-events: auto; }
+  .toast { display: flex; align-items: center; gap: 4px; white-space: nowrap; max-width: calc(100vw - 32px); }
+  .toast button {
+    background: none; border: 0; color: #9EC2F0; font-family: var(--body);
+    font-size: 13px; font-weight: 600; padding: 6px 4px 6px 12px; cursor: pointer;
+  }
   .hidden { display: none !important; }
+
+  /* Suggestions */
+  .suggest-sec .sec-head h2 { color: var(--cobalt); }
+  .sugg-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .tile .why { display: block; font-size: 11px; color: #6A7885; margin-top: 4px; }
+  .tile[aria-pressed="true"] .why { color: rgba(255,255,255,0.82); }
+  .tile.wild { border-style: dashed; border-color: var(--sage); }
+  .wild-tag {
+    display: block; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    font-weight: 600; color: var(--sage); margin-bottom: 3px;
+  }
+  .tile[aria-pressed="true"] .wild-tag { color: #fff; }
+  .sugg-note { margin: 0; font-size: 13px; color: #6A7885; max-width: 46ch; }
+  body.editing .suggest-sec { display: none; }
+
+  /* Complete trip */
+  .complete-wrap { margin: 30px 0 6px; }
+  .complete {
+    width: 100%; min-height: 52px; padding: 0 18px;
+    background: var(--sage); color: #fff; border: 1px solid #57704F; border-radius: 2px;
+    font-family: var(--body); font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  .complete:disabled { background: var(--tile); color: #93A1AC; border-color: var(--hairline); cursor: default; }
+  .complete.danger { background: #8A5A52; border-color: #6E453F; }
+  .complete-hint { margin: 8px 0 0; font-size: 12px; color: #6A7885; }
+
+  /* History */
+  .trip { border-bottom: 1px solid var(--hairline); padding: 16px 0; }
+  .trip-head { display: flex; align-items: baseline; gap: 10px; }
+  .trip-date { font-family: var(--display); font-size: 21px; color: var(--cobalt-deep); }
+  .trip-count { font-size: 12px; color: var(--cobalt); font-weight: 600; }
+  .trip-del { margin-left: auto; min-height: 36px; padding: 6px 10px; }
+  .trip-items { margin: 6px 0 0; font-size: 14px; color: #44525F; }
+
+  /* Confirm dialog */
+  dialog.confirm {
+    border: 1px solid var(--hairline); border-radius: 2px; padding: 22px 20px 18px;
+    width: min(92vw, 420px); background: var(--tile); color: var(--ink);
+  }
+  dialog.confirm::backdrop { background: rgba(27,39,51,0.45); }
+  dialog.confirm h3 {
+    font-family: var(--display); font-weight: 400; font-size: 26px;
+    margin: 0 0 10px; color: var(--cobalt-deep);
+  }
+  dialog.confirm p { margin: 0 0 6px; font-size: 14px; color: #44525F; }
+  .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+  .dialog-actions .complete { width: auto; }
 
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -171,6 +223,7 @@
 
   <div class="toolbar" id="toolbar">
     <button class="btn" id="editBtn" aria-pressed="false">Edit staples</button>
+    <button class="btn" id="historyBtn">History</button>
     <span class="spacer"></span>
     <button class="btn quiet" id="exportBtn">Back up</button>
     <button class="btn quiet" id="importBtn">Restore</button>
@@ -181,6 +234,14 @@
 
   <div id="listView" class="hidden">
     <div id="listBody"></div>
+    <div class="complete-wrap hidden" id="completeWrap">
+      <button class="complete" id="completeBtn" type="button">Complete trip</button>
+      <p class="complete-hint" id="completeHint"></p>
+    </div>
+  </div>
+
+  <div id="historyView" class="hidden">
+    <div id="historyBody"></div>
   </div>
 </div>
 
@@ -191,7 +252,18 @@
   </div>
 </div>
 
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status"></div>
+
+<dialog class="confirm" id="confirm">
+  <h3 id="confirmTitle"></h3>
+  <div id="confirmBody"></div>
+  <div class="dialog-actions">
+    <button class="btn" id="confirmNo" type="button">Not yet</button>
+    <button class="complete" id="confirmYes" type="button">Confirm</button>
+  </div>
+</dialog>
+
+<script src="suggest.js"></script>
 
 <script>
 const KEY = 'kitchen-inventory-v1';
@@ -212,7 +284,7 @@ const SEED = [
 let state = null, mode = 'inventory';
 
 function freshState() {
-  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {} };
+  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {} };
 }
 
 function load() {
@@ -220,12 +292,19 @@ function load() {
     const raw = localStorage.getItem(KEY);
     const parsed = raw ? JSON.parse(raw) : null;
     if (parsed && Array.isArray(parsed.sections)) {
-      parsed.needed = parsed.needed || {};
-      parsed.got = parsed.got || {};
-      return parsed;
+      return normalize(parsed);
     }
   } catch (e) {}
   return freshState();
+}
+
+// Older saves and backups predate history; fill in what's missing.
+function normalize(s) {
+  s.needed = s.needed || {};
+  s.got = s.got || {};
+  s.history = Array.isArray(s.history) ? s.history : [];
+  s.wildAdded = s.wildAdded || {};
+  return s;
 }
 
 function save() {
@@ -235,10 +314,102 @@ function save() {
 
 function neededCount() { return Object.values(state.needed).filter(Boolean).length; }
 
-function toast(msg) {
+let toastTimer = null;
+function toast(msg, action) {
   const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('on');
-  setTimeout(() => t.classList.remove('on'), 2400);
+  t.textContent = msg;
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = action.label;
+    b.onclick = () => { t.classList.remove('on'); clearTimeout(toastTimer); action.fn(); };
+    t.appendChild(b);
+  }
+  t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), action ? 8000 : 2400);
+}
+
+// Promise-based confirmation sheet. Resolves true only on an explicit yes.
+function confirmSheet({ title, body, yes, danger }) {
+  const d = document.getElementById('confirm');
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmBody').innerHTML = body;
+  const ok = document.getElementById('confirmYes');
+  ok.textContent = yes;
+  ok.classList.toggle('danger', !!danger);
+  return new Promise(resolve => {
+    const done = v => { d.close(); resolve(v); };
+    ok.onclick = () => done(true);
+    document.getElementById('confirmNo').onclick = () => done(false);
+    d.oncancel = e => { e.preventDefault(); done(false); };
+    d.showModal();
+    document.getElementById('confirmNo').focus();
+  });
+}
+
+function toggleNeeded(item) {
+  state.needed[item] = !state.needed[item];
+  if (!state.needed[item]) {
+    delete state.got[item];
+    // A wild card you changed your mind about doesn't stay in your staples.
+    if (state.wildAdded[item]) {
+      state.sections.forEach(sec => { sec.items = sec.items.filter(x => x !== item); });
+      delete state.wildAdded[item];
+    }
+  }
+  save(); renderInventory(); updateDock();
+}
+
+function takeWildcard(w) {
+  const inList = state.sections.some(sec => sec.items.includes(w.name));
+  if (!inList) {
+    const sec = state.sections.find(x => x.name === w.section)
+      || state.sections.find(x => x.name === 'Produce') || state.sections[0];
+    sec.items.push(w.name);
+    state.wildAdded[w.name] = true;
+  }
+  toggleNeeded(w.name);
+}
+
+function suggestTile(name, why, wild) {
+  const b = document.createElement('button');
+  b.className = 'tile' + (wild ? ' wild' : ''); b.type = 'button';
+  const on = !!state.needed[name];
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.setAttribute('aria-label', (wild ? 'Wild card: ' : 'Suggested: ') + name + ' — ' + why + (on ? ' — needed' : ''));
+  b.innerHTML = (wild ? '<span class="wild-tag">Wild card</span>' : '')
+    + esc(name) + `<span class="why">${esc(why)}</span>`;
+  return b;
+}
+
+function renderSuggestions(root, analysis) {
+  const { suggestions, wildcard } = analysis;
+  const el = document.createElement('section');
+  el.className = 'suggest-sec';
+  const n = suggestions.length + (wildcard ? 1 : 0);
+  el.innerHTML = `<div class="sec-head"><h2>Suggested</h2><span class="sec-count">${n ? 'for this trip' : ''}</span></div>`;
+
+  if (!n) {
+    if (state.history.length) return; // nothing due; stay out of the way
+    el.innerHTML += `<p class="sugg-note">Check items off at the store and tap <b>Complete trip</b>. After a few trips, Inventaire learns what you buy and when, and suggests things here.</p>`;
+    root.appendChild(el);
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'grid sugg-grid';
+  suggestions.forEach(sg => {
+    const b = suggestTile(sg.name, sg.reason, false);
+    b.onclick = () => toggleNeeded(sg.name);
+    grid.appendChild(b);
+  });
+  if (wildcard) {
+    const b = suggestTile(wildcard.name, wildcard.note, true);
+    b.onclick = () => takeWildcard(wildcard);
+    grid.appendChild(b);
+  }
+  el.appendChild(grid);
+  root.appendChild(el);
 }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -246,6 +417,8 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 function renderInventory() {
   const root = document.getElementById('inventory');
   root.innerHTML = '';
+  const analysis = Suggest.analyze(state);
+  renderSuggestions(root, analysis);
   state.sections.forEach((sec, si) => {
     const el = document.createElement('section');
     const need = sec.items.filter(i => state.needed[i]).length;
@@ -257,7 +430,7 @@ function renderInventory() {
 
     const grid = document.createElement('div');
     grid.className = 'grid';
-    sec.items.forEach(item => {
+    Suggest.sortItems(sec.items, analysis.usage).forEach(item => {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
 
@@ -265,11 +438,7 @@ function renderInventory() {
       b.className = 'tile'; b.type = 'button'; b.textContent = item;
       b.setAttribute('aria-pressed', state.needed[item] ? 'true' : 'false');
       b.setAttribute('aria-label', item + (state.needed[item] ? ' — needed' : ' — stocked'));
-      b.onclick = () => {
-        state.needed[item] = !state.needed[item];
-        if (!state.needed[item]) delete state.got[item];
-        save(); renderInventory(); updateDock();
-      };
+      b.onclick = () => toggleNeeded(item);
 
       const k = document.createElement('button');
       k.className = 'kill'; k.type = 'button'; k.textContent = '×';
@@ -278,6 +447,8 @@ function renderInventory() {
         e.stopPropagation();
         sec.items = sec.items.filter(x => x !== item);
         delete state.needed[item];
+        delete state.got[item];
+        delete state.wildAdded[item];
         save(); renderInventory(); updateDock();
       };
 
@@ -314,6 +485,7 @@ function renderInventory() {
 function renderList() {
   const body = document.getElementById('listBody');
   body.innerHTML = '';
+  renderComplete();
   if (!neededCount()) {
     body.innerHTML = `<div class="empty">
       <p class="big">Nothing marked yet.</p>
@@ -338,6 +510,100 @@ function renderList() {
   });
 }
 
+function tripCounts() {
+  let got = 0, left = 0;
+  state.sections.forEach(sec => sec.items.forEach(i => {
+    if (!state.needed[i]) return;
+    if (state.got[i]) got++; else left++;
+  }));
+  return { got, left };
+}
+
+function renderComplete() {
+  const wrap = document.getElementById('completeWrap');
+  const { got, left } = tripCounts();
+  wrap.classList.toggle('hidden', !(got + left));
+  const btn = document.getElementById('completeBtn');
+  btn.disabled = !got;
+  btn.textContent = got ? `Complete trip · ${got} bought` : 'Complete trip';
+  document.getElementById('completeHint').textContent = !got
+    ? 'Check items off as they go in the cart, then complete the trip.'
+    : left ? `${left} not checked off will stay on your list for next time.` : 'Everything on the list is checked off.';
+}
+
+function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+
+async function completeTrip() {
+  const bought = [];
+  state.sections.forEach(sec => sec.items.forEach(i => {
+    if (state.needed[i] && state.got[i]) bought.push({ name: i, section: sec.name });
+  }));
+  if (!bought.length) return;
+  const { left } = tripCounts();
+  const ok = await confirmSheet({
+    title: 'Complete this trip?',
+    body: `<p>${plural(bought.length, 'item')} you checked off will be saved to your history.</p>`
+      + (left ? `<p>${plural(left, 'item')} you didn't check off will stay on your list.</p>` : ''),
+    yes: 'Complete trip'
+  });
+  if (!ok) return;
+
+  const before = JSON.stringify(state);
+  const now = Date.now();
+  state.history.push({ id: now.toString(36), date: now, items: bought });
+  bought.forEach(b => { delete state.needed[b.name]; delete state.got[b.name]; delete state.wildAdded[b.name]; });
+  save();
+  setMode('inventory');
+  toast(`Trip saved · ${plural(bought.length, 'item')}`, {
+    label: 'Undo',
+    fn: () => { state = normalize(JSON.parse(before)); save(); setMode('list'); toast('Trip undone — your list is back'); }
+  });
+}
+
+function fmtDate(ms) {
+  const d = new Date(ms);
+  const opts = { weekday: 'short', month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString(undefined, opts);
+}
+
+function renderHistory() {
+  const body = document.getElementById('historyBody');
+  body.innerHTML = '';
+  if (!state.history.length) {
+    body.innerHTML = `<div class="empty">
+      <p class="big">No trips yet.</p>
+      <p>When you finish shopping, tap Complete trip on your list. Each trip lands here.</p></div>`;
+    return;
+  }
+  state.history.slice().reverse().forEach(trip => {
+    const el = document.createElement('div');
+    el.className = 'trip';
+    el.innerHTML = `<div class="trip-head">
+        <span class="trip-date">${esc(fmtDate(trip.date))}</span>
+        <span class="trip-count">${plural(trip.items.length, 'item')}</span>
+      </div>
+      <p class="trip-items">${trip.items.map(i => esc(i.name)).join(', ')}</p>`;
+    const del = document.createElement('button');
+    del.className = 'btn quiet trip-del'; del.type = 'button'; del.textContent = 'Delete';
+    del.setAttribute('aria-label', 'Delete trip from ' + fmtDate(trip.date));
+    del.onclick = async () => {
+      const ok = await confirmSheet({
+        title: 'Delete this trip?',
+        body: `<p>${esc(fmtDate(trip.date))} · ${plural(trip.items.length, 'item')}. Suggestions will stop counting it.</p>`,
+        yes: 'Delete', danger: true
+      });
+      if (!ok) return;
+      const idx = state.history.indexOf(trip);
+      state.history.splice(idx, 1);
+      save(); renderHistory();
+      toast('Trip deleted', { label: 'Undo', fn: () => { state.history.splice(idx, 0, trip); save(); renderHistory(); } });
+    };
+    el.querySelector('.trip-head').appendChild(del);
+    body.appendChild(el);
+  });
+}
+
 function listAsText() {
   const lines = [];
   state.sections.forEach(sec => {
@@ -359,7 +625,7 @@ function updateDock() {
     copy.classList.add('hidden');
   } else {
     btn.textContent = 'Back to inventory';
-    copy.classList.toggle('hidden', n === 0);
+    copy.classList.toggle('hidden', mode !== 'list' || n === 0);
   }
 }
 
@@ -368,16 +634,21 @@ function setMode(next) {
   const inv = mode === 'inventory';
   document.getElementById('inventory').classList.toggle('hidden', !inv);
   document.getElementById('toolbar').classList.toggle('hidden', !inv);
-  document.getElementById('listView').classList.toggle('hidden', inv);
-  document.getElementById('lede').textContent = inv
-    ? "Walk the fridge and pantry. Tap anything you're out of — it turns blue. The blue ones become your shopping list."
-    : "Check things off as they go in the cart. Your marks stay until you clear them.";
-  if (inv) renderInventory(); else renderList();
+  document.getElementById('listView').classList.toggle('hidden', mode !== 'list');
+  document.getElementById('historyView').classList.toggle('hidden', mode !== 'history');
+  document.getElementById('lede').textContent = {
+    inventory: "Walk the fridge and pantry. Tap anything you're out of — it turns blue. The blue ones become your shopping list.",
+    list: "Check things off as they go in the cart. When you're done, complete the trip.",
+    history: "Your past trips. Suggestions learn from these."
+  }[mode];
+  if (inv) renderInventory(); else if (mode === 'list') renderList(); else renderHistory();
   updateDock();
   window.scrollTo(0, 0);
 }
 
 document.getElementById('switchBtn').onclick = () => setMode(mode === 'inventory' ? 'list' : 'inventory');
+document.getElementById('historyBtn').onclick = () => setMode('history');
+document.getElementById('completeBtn').onclick = completeTrip;
 
 document.getElementById('editBtn').onclick = (e) => {
   const on = document.body.classList.toggle('editing');
@@ -401,14 +672,12 @@ document.getElementById('exportBtn').onclick = async () => {
 };
 
 document.getElementById('importBtn').onclick = () => {
-  const raw = prompt('Paste a backup to replace everything on this device:');
+  const raw = prompt('Paste a backup to replace everything on this device, including trip history:');
   if (!raw) return;
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed.sections)) throw new Error('wrong shape');
-    parsed.needed = parsed.needed || {};
-    parsed.got = parsed.got || {};
-    state = parsed;
+    state = normalize(parsed);
     save(); renderInventory(); updateDock();
     toast('Restored');
   } catch (e) {
@@ -431,6 +700,15 @@ updateDock();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  // When an update installs, reload once so the new version shows right away.
+  // Skipped on the very first install, and while a sheet is open.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded || document.getElementById('confirm').open) return;
+    reloaded = true;
+    location.reload();
+  });
 }
 </script>
 </body>

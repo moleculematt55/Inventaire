@@ -1,7 +1,8 @@
-const CACHE = 'inventaire-v2';
+const CACHE = 'inventaire-v3';
 const CORE = [
   './',
   'index.html',
+  'suggest.js',
   'manifest.webmanifest',
   'icon-192.png',
   'apple-touch-icon.png',
@@ -9,12 +10,13 @@ const CORE = [
   'icon-maskable-512.png'
 ];
 
-// Cache the app shell on install. Fonts are cached opportunistically below,
+// Cache the app shell on install, bypassing the browser's HTTP cache so an
+// update never captures a stale copy. Fonts are cached opportunistically below,
 // and the page falls back to system faces if they never arrive.
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE)
-      .then(c => Promise.allSettled(CORE.map(u => c.add(u))))
+      .then(c => Promise.allSettled(CORE.map(u => c.add(new Request(u, { cache: 'reload' })))))
       .then(() => self.skipWaiting())
   );
 });
