@@ -94,7 +94,7 @@
     let images = [];
     try { for (const f of files) images = images.concat(await prepareImage(f, slice)); }
     catch (e) { throw new AIError('image', 'Couldn\'t open that photo. Try taking it again.'); }
-    if (images.length > MAX_IMAGES) throw new AIError('image', `That's too many photos at once. Try ${what === 'recipe' ? 'up to 4 pages' : 'a single receipt'}.`);
+    if (images.length > MAX_IMAGES) throw new AIError('image', `That's too many photos at once. Try ${what === 'recipe' ? 'up to 4 pages' : what === 'receipt' ? 'a single receipt' : 'up to 4 photos'}.`);
 
     const content = images.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }));
     content.push({ type: 'text', text: prompt(images.length) });

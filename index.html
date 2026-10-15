@@ -276,6 +276,26 @@
   .sheet-btns { display: grid; gap: 8px; margin-top: 16px; }
   .sheet-btns .complete, .sheet-btns .btn { width: 100%; }
 
+  /* Fridge scan */
+  .fridge-cta { margin: 22px 0 0; }
+  body.editing .fridge-cta { display: none; }
+  .rline .list-item { border-bottom: 0; padding: 4px 0; min-height: 44px; }
+  .bucket-note { margin: -4px 0 6px; font-size: 12px; color: #6A7885; max-width: 52ch; }
+  details.bucket { margin-top: 26px; }
+  details.bucket > summary { list-style: none; cursor: pointer; }
+  details.bucket > summary::-webkit-details-marker { display: none; }
+  details.bucket > summary .sec-head h2::after { content: '  ▸'; color: var(--cobalt); }
+  details.bucket[open] > summary .sec-head h2::after { content: '  ▾'; }
+  .verdict { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600; }
+  .verdict.low { color: #8A6A2A; }
+  .verdict.missing { color: #8A5A52; }
+  .verdict.stocked { color: #57704F; }
+  .list-item.pick[aria-pressed="true"] .for { color: #6A7885; }
+  .list-item.pick .verdict.low { color: #8A6A2A; }
+  .list-item.pick .verdict.missing { color: #8A5A52; }
+  .list-item.pick .verdict.stocked { color: #57704F; }
+  .list-item.pick:disabled .verdict { color: #B3BEC6; }
+
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -341,9 +361,13 @@
     <div id="recipeEditBody"></div>
   </div>
 
+  <div id="fridgeView" class="hidden">
+    <div id="fridgeBody"></div>
+  </div>
+
   <input type="file" accept="image/*" id="receiptFile" hidden>
-  <input type="file" accept="image/*" capture="environment" id="recipeCam" hidden>
-  <input type="file" accept="image/*" multiple id="recipePick" hidden>
+  <input type="file" accept="image/*" capture="environment" id="photoCam" hidden>
+  <input type="file" accept="image/*" multiple id="photoMulti" hidden>
 </div>
 
 <div class="dock">
@@ -384,9 +408,8 @@
 </dialog>
 
 <dialog class="confirm" id="photoSheet">
-  <h3>Add a recipe</h3>
-  <p>Photograph the page with the ingredients: a cookbook, a recipe card or a screenshot all work.</p>
-  <p>If a recipe runs over two pages, choose both photos.</p>
+  <h3 id="photoTitle">Add a recipe</h3>
+  <div id="photoText"></div>
   <div class="sheet-btns">
     <button class="complete" id="photoTake" type="button">Take a photo</button>
     <button class="btn" id="photoPick" type="button">Choose photos</button>
@@ -400,6 +423,7 @@
 <script src="claude.js"></script>
 <script src="receipt.js"></script>
 <script src="recipe.js"></script>
+<script src="pantry.js"></script>
 
 <script>
 const KEY = 'kitchen-inventory-v1';
@@ -417,13 +441,13 @@ const SEED = [
   ["Household", ["Dish soap","Sponges","Paper towels","Trash bags","Dishwasher pods","Laundry detergent","Foil","Parchment paper","Zip bags"]]
 ];
 
-let state = null, mode = 'inventory', draft = null, rdraft = null, openRecipeId = null, picks = null;
+let state = null, mode = 'inventory', draft = null, rdraft = null, fdraft = null, openRecipeId = null, picks = null;
 const DRAFT_KEY = 'inventaire-receipt-draft';
 const RDRAFT_KEY = 'inventaire-recipe-draft';
 const money = n => '$' + (Math.round(n * 100) / 100).toFixed(2);
 
 function freshState() {
-  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {}, receiptMap: {}, recipes: [], ingredientMap: {}, listFor: {} };
+  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {}, receiptMap: {}, recipes: [], ingredientMap: {}, listFor: {}, fridgeMap: {} };
 }
 
 function load() {
@@ -447,6 +471,7 @@ function normalize(s) {
   s.recipes = Array.isArray(s.recipes) ? s.recipes : [];
   s.ingredientMap = s.ingredientMap || {};
   s.listFor = s.listFor || {};
+  s.fridgeMap = s.fridgeMap || {};
   return s;
 }
 
@@ -582,6 +607,12 @@ function renderInventory() {
   const root = document.getElementById('inventory');
   root.innerHTML = '';
   const analysis = Suggest.analyze(state);
+  const cta = document.createElement('div');
+  cta.className = 'receipt-cta fridge-cta';
+  cta.innerHTML = `<button class="btn" type="button" id="scanFridgeBtn">Scan fridge</button>
+    <p>Photograph your fridge, freezer or pantry and Inventaire suggests what to add.</p>`;
+  cta.querySelector('button').onclick = scanFridge;
+  root.appendChild(cta);
   renderSuggestions(root, analysis);
   state.sections.forEach((sec, si) => {
     const el = document.createElement('section');
@@ -936,8 +967,8 @@ async function showAIError(err, what) {
   }
 }
 
-function showBusy(what) {
-  document.getElementById('busyWhat').textContent = 'Reading ' + what;
+function showBusy(what, label) {
+  document.getElementById('busyWhat').textContent = label || 'Reading ' + what;
   const busy = document.getElementById('busy');
   busy.oncancel = ev => ev.preventDefault();
   busy.showModal();
@@ -1115,6 +1146,7 @@ document.getElementById('cancelBtn').onclick = () => {
   if (mode === 'receipt') return cancelReceipt();
   if (mode === 'recipeEdit') return cancelRecipeEdit();
   if (mode === 'recipe') return setMode('recipes');
+  if (mode === 'fridge') return cancelFridge();
 };
 
 // ---------- Recipes ----------
@@ -1125,17 +1157,36 @@ function saveRDraft() {
   try { rdraft ? localStorage.setItem(RDRAFT_KEY, JSON.stringify(rdraft)) : localStorage.removeItem(RDRAFT_KEY); } catch (e) {}
 }
 
-async function scanRecipe() {
+// Camera (one photo) or gallery (several), then onFiles(files).
+let photoHandler = null;
+async function openPhotoSheet({ title, text, onFiles }) {
   if (!Claude.getKey()) {
     const ok = await openKeySheet();
     if (!ok || !Claude.getKey()) return;
   }
   const d = document.getElementById('photoSheet');
+  document.getElementById('photoTitle').textContent = title;
+  document.getElementById('photoText').innerHTML = text;
+  photoHandler = onFiles;
   const pick = id => { d.close(); const f = document.getElementById(id); f.value = ''; f.click(); };
-  document.getElementById('photoTake').onclick = () => pick('recipeCam');
-  document.getElementById('photoPick').onclick = () => pick('recipePick');
+  document.getElementById('photoTake').onclick = () => pick('photoCam');
+  document.getElementById('photoPick').onclick = () => pick('photoMulti');
   document.getElementById('photoCancel').onclick = () => d.close();
   d.showModal();
+}
+function onPhotoFiles(e) {
+  const files = [...(e.target.files || [])].slice(0, 4);
+  if (files.length && photoHandler) photoHandler(files);
+}
+document.getElementById('photoCam').onchange = onPhotoFiles;
+document.getElementById('photoMulti').onchange = onPhotoFiles;
+
+function scanRecipe() {
+  openPhotoSheet({
+    title: 'Add a recipe',
+    text: '<p>Photograph the page with the ingredients: a cookbook, a recipe card or a screenshot all work.</p><p>If a recipe runs over two pages, choose both photos.</p>',
+    onFiles: readRecipeFiles
+  });
 }
 
 function rdraftFrom(out) {
@@ -1172,9 +1223,7 @@ function rdraftFrom(out) {
   };
 }
 
-async function readRecipeFiles(e) {
-  const files = [...(e.target.files || [])].slice(0, 4);
-  if (!files.length) return;
+async function readRecipeFiles(files) {
   const busy = showBusy('recipe');
   try {
     const out = await Recipe.read(files, state.sections);
@@ -1187,8 +1236,6 @@ async function readRecipeFiles(e) {
     showAIError(err, 'recipe');
   }
 }
-document.getElementById('recipeCam').onchange = readRecipeFiles;
-document.getElementById('recipePick').onchange = readRecipeFiles;
 
 function renderRecipeEdit() {
   const body = document.getElementById('recipeEditBody');
@@ -1448,6 +1495,222 @@ document.getElementById('recipesBtn').onclick = () => setMode('recipes');
 document.getElementById('scanRecipeBtn').onclick = scanRecipe;
 document.getElementById('keyBtn2').onclick = () => openKeySheet();
 
+// ---------- Fridge scan ----------
+// Claude sorts what it sees into stocked / low / missing. A photo only shows
+// the front of a shelf, so nothing goes on the list until you confirm it.
+
+const FDRAFT_KEY = 'inventaire-fridge-draft';
+const BUCKETS = [
+  ['low', 'Looks low', 'Visible, but running out.'],
+  ['missing', 'Expected but not seen', 'Staples Claude couldn\'t see. They may just be hidden behind something or in a drawer, so check before you add them.'],
+  ['stocked', 'Looks stocked', '']
+];
+
+function saveFDraft() {
+  try { fdraft ? localStorage.setItem(FDRAFT_KEY, JSON.stringify(fdraft)) : localStorage.removeItem(FDRAFT_KEY); } catch (e) {}
+}
+
+function scanFridge() {
+  openPhotoSheet({
+    title: 'Scan your fridge',
+    text: '<p>Open the door wide with the light on. Add the freezer or pantry too if you like, up to 4 photos.</p><p>Claude can only judge what it can see, so things at the back or in closed drawers may be missed. You\'ll confirm everything before it goes on your list.</p>',
+    onFiles: readFridgeFiles
+  });
+}
+
+function fdraftFrom(out) {
+  const sectionNames = state.sections.map(x => x.name);
+  const fallback = sectionNames.includes('Fridge') ? 'Fridge' : sectionNames[0];
+  const seen = new Set();
+  const items = [];
+  out.items.forEach(g => {
+    const verdict = ['stocked', 'low', 'missing'].includes(g.verdict) ? g.verdict : 'stocked';
+    const name = String(g.name || g.match || '').trim();
+    if (!name) return;
+    const matched = findStaple(g.match) || findStaple(name);
+    const it = {
+      seen: String(g.seen || '').trim(), name, key: ingKey(name), verdict,
+      confident: g.confident !== false,
+      section: sectionNames.includes(g.section) ? g.section : (matched ? stapleSection(matched) : fallback),
+      choice: matched ? 'staple' : 'new', staple: matched
+    };
+    const mem = state.fridgeMap[it.key];
+    if (mem) {
+      if (mem.choice === 'staple' && findStaple(mem.staple)) { it.choice = 'staple'; it.staple = findStaple(mem.staple); }
+      else if (mem.choice === 'new') { it.choice = 'new'; it.name = mem.name || it.name; it.section = mem.section || it.section; }
+      else if (mem.choice === 'skip' && !matched) it.choice = 'skip'; // never hide a staple for good
+    }
+    const dedupe = (it.choice === 'staple' ? it.staple : it.name).toLowerCase();
+    if (seen.has(dedupe)) return;
+    seen.add(dedupe);
+    it.on = defaultOn(it);
+    items.push(it);
+  });
+  return { areas: (out.areas || []).filter(Boolean), items };
+}
+
+// Low: add. Stocked: don't. Missing: add, unless the photo was unsure or
+// you bought it so recently it's more likely hidden than gone.
+function defaultOn(it) {
+  const res = resolveIng(it);
+  if (!res || state.needed[res.name]) return false;
+  if (it.verdict === 'stocked') return false;
+  if (it.verdict === 'low') return true;
+  if (!it.confident) return false;
+  return !/^Bought/.test(fridgeWhy(it, res));
+}
+
+function fridgeWhy(it, res) {
+  if (!res) return '';
+  const n = Suggest.recipeNeed(state, res.name, res.section, res.isStaple);
+  return /^(Bought|Last bought)/.test(n.why) ? n.why : '';
+}
+
+async function readFridgeFiles(files) {
+  const busy = showBusy('photo', 'Looking at your photos');
+  try {
+    const out = await Pantry.read(files, state.sections);
+    fdraft = fdraftFrom(out);
+    saveFDraft();
+    busy.close();
+    setMode('fridge');
+  } catch (err) {
+    busy.close();
+    showAIError(err, 'photo');
+  }
+}
+
+function fridgeCount() {
+  return fdraft ? fdraft.items.filter(it => it.on && fridgeState(it).ok).length : 0;
+}
+
+// Can this row be added right now? {ok, res, note}
+function fridgeState(it) {
+  const res = resolveIng(it);
+  if (!res) return { ok: false, res, note: 'Ignored' };
+  if (state.needed[res.name]) return { ok: false, res, note: 'Already on your list' };
+  return { ok: true, res, note: fridgeWhy(it, res) };
+}
+
+function renderFridge() {
+  const body = document.getElementById('fridgeBody');
+  if (!fdraft) { body.innerHTML = ''; return; }
+  body.innerHTML = '';
+  const sectionOpts = sel => state.sections.map(x => `<option${x.name === sel ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+  const stapleOpts = sel => state.sections.map(x =>
+    `<optgroup label="${esc(x.name)}">${x.items.filter(i => !state.wildAdded[i]).map(i => `<option value="s:${esc(i)}"${'s:' + i === sel ? ' selected' : ''}>${esc(i)}</option>`).join('')}</optgroup>`).join('');
+
+  if (fdraft.areas.length) {
+    const p = document.createElement('p');
+    p.className = 'r-meta'; p.style.marginTop = '18px';
+    p.textContent = 'Looked at: ' + fdraft.areas.filter(a => a !== 'other').join(', ');
+    if (fdraft.areas.some(a => a !== 'other')) body.appendChild(p);
+  }
+
+  BUCKETS.forEach(([verdict, label, note]) => {
+    const rows = fdraft.items.filter(it => it.verdict === verdict)
+      .sort((a, b) => (b.confident - a.confident) || a.name.localeCompare(b.name));
+    if (!rows.length) return;
+    const collapsed = verdict === 'stocked';
+    const box = document.createElement(collapsed ? 'details' : 'div');
+    if (collapsed) box.className = 'bucket';
+    const head = `<div class="sec-head" style="margin-top:${collapsed ? 0 : 26}px"><h2>${esc(label)}</h2><span class="sec-count">${rows.length}</span></div>`;
+    box.innerHTML = collapsed ? `<summary>${head}</summary>` : head + (note ? `<p class="bucket-note">${esc(note)}</p>` : '');
+    if (collapsed) box.innerHTML += `<p class="bucket-note">Left off your list unless you tick them.</p>`;
+
+    rows.forEach(it => {
+      const st = fridgeState(it);
+      const row = document.createElement('div');
+      row.className = 'rline' + (it.choice === 'skip' ? ' skip' : '');
+      const shown = it.choice === 'staple' ? it.staple : it.name;
+      const sub = [it.seen, !it.confident ? 'Not sure' : '', st.note].filter(Boolean).join(' · ');
+      const val = it.choice === 'staple' ? 's:' + it.staple : '__' + it.choice;
+      row.innerHTML = `
+        <button class="list-item pick" type="button" aria-pressed="${it.on && st.ok ? 'true' : 'false'}"${st.ok ? '' : ' disabled'}>
+          <span class="box"></span>
+          <span class="lbl"><span class="label">${esc(shown)}</span>${sub ? `<span class="for">${esc(sub)}</span>` : ''}</span>
+          <span class="lp verdict ${verdict}">${esc(verdict === 'missing' ? 'not seen' : verdict)}</span>
+        </button>
+        <select class="field rl-choice" aria-label="What is ${esc(it.name)}?">
+          ${stapleOpts(val)}
+          <optgroup label="Not a staple">
+            <option value="__new"${val === '__new' ? ' selected' : ''}>New item: ${esc(it.name)}</option>
+            <option value="__skip"${val === '__skip' ? ' selected' : ''}>Ignore</option>
+          </optgroup>
+        </select>
+        ${it.choice === 'new' ? `<div class="rl-new">
+            <input class="field rl-name" value="${esc(it.name)}" aria-label="Item name">
+            <select class="field rl-sec" aria-label="Category">${sectionOpts(it.section)}</select>
+          </div>` : ''}`;
+      row.querySelector('.pick').onclick = () => { it.on = !it.on; saveFDraft(); renderFridge(); updateDock(); };
+      row.querySelector('.rl-choice').onchange = e => {
+        const v = e.target.value;
+        if (v.startsWith('s:')) { it.choice = 'staple'; it.staple = v.slice(2); }
+        else it.choice = v.slice(2);
+        if (it.choice === 'skip') it.on = false;
+        saveFDraft(); renderFridge(); updateDock();
+      };
+      const nm = row.querySelector('.rl-name');
+      if (nm) {
+        nm.oninput = e => { it.name = e.target.value; row.querySelector('.label').textContent = it.name; saveFDraft(); };
+        row.querySelector('.rl-sec').onchange = e => { it.section = e.target.value; saveFDraft(); };
+      }
+      box.appendChild(row);
+    });
+    if (collapsed && fdraft.openStocked) box.open = true;
+    if (collapsed) box.ontoggle = () => { fdraft.openStocked = box.open; saveFDraft(); };
+    body.appendChild(box);
+  });
+}
+
+async function cancelFridge() {
+  const ok = await confirmSheet({ title: 'Discard this scan?', body: '<p>Nothing will be added to your list.</p>', yes: 'Discard', danger: true });
+  if (!ok) return;
+  fdraft = null; saveFDraft();
+  setMode('inventory');
+}
+
+function saveFridge() {
+  if (!fdraft) return;
+  if (fdraft.items.some(it => it.on && it.choice === 'new' && !String(it.name).trim())) {
+    toast('Give each new item a name, or ignore it');
+    return;
+  }
+  const before = JSON.stringify(state);
+  // Remember how each thing was matched, for the next scan.
+  fdraft.items.forEach(it => {
+    if (!it.key) return;
+    const mem = { choice: it.choice };
+    if (it.choice === 'staple') mem.staple = it.staple;
+    if (it.choice === 'new') { mem.name = String(it.name).trim(); mem.section = it.section; }
+    state.fridgeMap[it.key] = mem;
+  });
+  let added = 0;
+  fdraft.items.forEach(it => {
+    if (!it.on) return;
+    const st = fridgeState(it);
+    if (!st.ok) return;
+    const { name, section } = st.res;
+    if (!stapleSection(name)) {
+      const sec = state.sections.find(x => x.name === section)
+        || state.sections.find(x => x.name === 'Fridge') || state.sections[0];
+      sec.items.push(name);
+      state.wildAdded[name] = true; // one-off: leaves your categories once bought
+    }
+    state.needed[name] = true;
+    delete state.got[name];
+    added++;
+  });
+  const savedDraft = fdraft;
+  fdraft = null; saveFDraft();
+  save();
+  setMode(added ? 'list' : 'inventory');
+  toast(added ? `Added ${plural(added, 'item')} to your list` : 'Nothing added', {
+    label: 'Undo',
+    fn: () => { state = normalize(JSON.parse(before)); fdraft = savedDraft; saveFDraft(); save(); setMode('fridge'); }
+  });
+}
+
 function listAsText() {
   const lines = [];
   state.sections.forEach(sec => {
@@ -1468,12 +1731,17 @@ function updateDock() {
   const btn = document.getElementById('switchBtn');
   const copy = document.getElementById('copyBtn');
   const cancel = document.getElementById('cancelBtn');
-  cancel.classList.toggle('hidden', !['receipt', 'recipeEdit', 'recipe'].includes(mode));
+  cancel.classList.toggle('hidden', !['receipt', 'recipeEdit', 'recipe', 'fridge'].includes(mode));
   cancel.textContent = mode === 'recipe' ? 'Back' : 'Cancel';
   btn.disabled = false;
   if (mode === 'recipe') {
     const k = picks ? picks.filter(p => p.on).length : 0;
     btn.textContent = k ? `Add ${k} to shopping list` : 'Nothing checked to add';
+    btn.disabled = !k;
+    copy.classList.add('hidden');
+  } else if (mode === 'fridge') {
+    const k = fridgeCount();
+    btn.textContent = k ? `Add ${k} to shopping list` : 'Nothing ticked to add';
     btn.disabled = !k;
     copy.classList.add('hidden');
   } else if (mode === 'recipeEdit') {
@@ -1505,6 +1773,7 @@ function setMode(next) {
   document.getElementById('recipesView').classList.toggle('hidden', mode !== 'recipes');
   document.getElementById('recipeView').classList.toggle('hidden', mode !== 'recipe');
   document.getElementById('recipeEditView').classList.toggle('hidden', mode !== 'recipeEdit');
+  document.getElementById('fridgeView').classList.toggle('hidden', mode !== 'fridge');
   document.getElementById('lede').textContent = {
     inventory: "Walk the fridge and pantry. Tap anything you're out of — it turns blue. The blue ones become your shopping list.",
     list: "Check things off as they go in the cart. When you're done, complete the trip.",
@@ -1512,13 +1781,15 @@ function setMode(next) {
     receipt: "Check how each line was matched. Your choices are remembered for this store's next receipt.",
     recipes: "Pick a recipe to put what you need for it on your shopping list.",
     recipe: "Checked ingredients go on your list. Things you probably have are left unchecked. Tap to change.",
-    recipeEdit: "Check how each ingredient was matched to your staples. Your choices are remembered for the next recipe."
+    recipeEdit: "Check how each ingredient was matched to your staples. Your choices are remembered for the next recipe.",
+    fridge: "Here's what Claude could see. It only knows what's visible, so check anything marked not seen. Ticked items go on your list."
   }[mode];
   if (inv) renderInventory(); else if (mode === 'list') renderList();
   else if (mode === 'receipt') renderReceipt();
   else if (mode === 'recipes') renderRecipes();
   else if (mode === 'recipe') renderRecipe();
   else if (mode === 'recipeEdit') renderRecipeEdit();
+  else if (mode === 'fridge') renderFridge();
   else renderHistory();
   updateDock();
   window.scrollTo(0, 0);
@@ -1528,6 +1799,7 @@ document.getElementById('switchBtn').onclick = () => {
   if (mode === 'receipt') return saveReceipt();
   if (mode === 'recipeEdit') return saveRecipe();
   if (mode === 'recipe') return addRecipeToList();
+  if (mode === 'fridge') return saveFridge();
   if (mode === 'recipes') return setMode(neededCount() ? 'list' : 'inventory');
   setMode(mode === 'inventory' ? 'list' : 'inventory');
 };
@@ -1583,8 +1855,11 @@ state = load();
 try { draft = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (e) { draft = null; }
 try { rdraft = JSON.parse(localStorage.getItem(RDRAFT_KEY) || 'null'); } catch (e) { rdraft = null; }
 if (!(rdraft && Array.isArray(rdraft.ingredients))) rdraft = null;
+try { fdraft = JSON.parse(localStorage.getItem(FDRAFT_KEY) || 'null'); } catch (e) { fdraft = null; }
+if (!(fdraft && Array.isArray(fdraft.items))) fdraft = null;
 if (draft && Array.isArray(draft.lines)) setMode('receipt');
 else if (rdraft) { draft = null; setMode('recipeEdit'); }
+else if (fdraft) { draft = null; setMode('fridge'); }
 else { draft = null; renderInventory(); updateDock(); }
 
 if ('serviceWorker' in navigator) {
