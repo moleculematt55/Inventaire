@@ -63,8 +63,37 @@
   .toolbar {
     display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
     padding: 12px 0 6px; border-bottom: 1px solid var(--hairline);
-    position: sticky; top: 0; background: var(--porcelain); z-index: 5;
   }
+  .searchbar {
+    position: sticky; top: 0; z-index: 5; background: var(--porcelain);
+    padding: 10px 0; border-bottom: 1px solid var(--hairline);
+  }
+  .search-field { position: relative; }
+  .search-field input {
+    width: 100%; font-family: var(--body); font-size: 16px; color: var(--ink);
+    padding: 12px 44px 12px 40px; min-height: 48px;
+    border: 1px solid var(--hairline); border-radius: 2px; background: var(--tile);
+  }
+  .search-field input:focus { border-color: var(--cobalt); outline: none; }
+  .search-field .glass {
+    position: absolute; left: 13px; top: 50%; width: 15px; height: 15px; transform: translateY(-58%);
+    border: 2px solid #6A7885; border-radius: 50%; pointer-events: none;
+  }
+  .search-field .glass::after {
+    content: ''; position: absolute; width: 2px; height: 7px; background: #6A7885;
+    right: -4px; bottom: -6px; transform: rotate(-45deg);
+  }
+  .search-clear {
+    position: absolute; right: 2px; top: 2px; bottom: 2px; width: 44px;
+    border: 0; background: none; color: #6A7885; font-size: 22px; cursor: pointer;
+  }
+  .search-note { margin: 18px 0 0; font-size: 14px; color: #44525F; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { border-style: dashed; border-color: var(--sage); text-align: left; line-height: 1.2; }
+  .chip .why { display: block; font-size: 11px; color: #6A7885; font-weight: 400; margin-top: 2px; }
+  .custom-add { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+  .custom-add .field { flex: 1 1 150px; }
+  .custom-add select.field { flex: 0 1 150px; }
   .btn {
     font-family: var(--body); font-size: 13px; font-weight: 500;
     padding: 9px 14px; min-height: 44px;
@@ -318,6 +347,15 @@
     <button class="btn quiet" id="clearBtn">Clear marks</button>
   </div>
 
+  <div class="searchbar" id="searchBar">
+    <div class="search-field">
+      <span class="glass" aria-hidden="true"></span>
+      <input type="text" id="searchInput" placeholder="Search staples, e.g. cheese" enterkeyhint="search"
+        autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Search staples">
+      <button class="search-clear hidden" id="searchClear" type="button" aria-label="Clear search">×</button>
+    </div>
+  </div>
+
   <main id="inventory"></main>
 
   <div id="listView" class="hidden">
@@ -424,6 +462,7 @@
 <script src="receipt.js"></script>
 <script src="recipe.js"></script>
 <script src="pantry.js"></script>
+<script src="search.js"></script>
 
 <script>
 const KEY = 'kitchen-inventory-v1';
@@ -607,14 +646,27 @@ function renderInventory() {
   const root = document.getElementById('inventory');
   root.innerHTML = '';
   const analysis = Suggest.analyze(state);
-  const cta = document.createElement('div');
-  cta.className = 'receipt-cta fridge-cta';
-  cta.innerHTML = `<button class="btn" type="button" id="scanFridgeBtn">Scan fridge</button>
-    <p>Photograph your fridge, freezer or pantry and Inventaire suggests what to add.</p>`;
-  cta.querySelector('button').onclick = scanFridge;
-  root.appendChild(cta);
-  renderSuggestions(root, analysis);
+  const q = searchQuery();
+  if (!q) {
+    const cta = document.createElement('div');
+    cta.className = 'receipt-cta fridge-cta';
+    cta.innerHTML = `<button class="btn" type="button" id="scanFridgeBtn">Scan fridge</button>
+      <p>Photograph your fridge, freezer or pantry and Inventaire suggests what to add.</p>`;
+    cta.querySelector('button').onclick = scanFridge;
+    root.appendChild(cta);
+    renderSuggestions(root, analysis);
+  }
+  let matches = 0, best = 0;
   state.sections.forEach((sec, si) => {
+    let items = Suggest.sortItems(sec.items, analysis.usage);
+    if (q) {
+      // Best matches first; keep the usual order among equals.
+      items = items.map((name, i) => ({ name, i, s: Search.score(q, name, sec.name) }))
+        .filter(x => x.s > 0).sort((a, b) => (b.s - a.s) || (a.i - b.i)).map(x => x.name);
+      if (!items.length) return;
+      matches += items.length;
+      best = Math.max(best, ...sec.items.map(n => Search.score(q, n, sec.name)));
+    }
     const el = document.createElement('section');
     const need = sec.items.filter(i => state.needed[i]).length;
 
@@ -625,7 +677,7 @@ function renderInventory() {
 
     const grid = document.createElement('div');
     grid.className = 'grid';
-    Suggest.sortItems(sec.items, analysis.usage).forEach(item => {
+    items.forEach(item => {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
 
@@ -675,7 +727,102 @@ function renderInventory() {
 
     root.appendChild(el);
   });
+  if (q) renderSearchAdd(root, q, matches, best);
 }
+
+// ---------- Search ----------
+function searchQuery() {
+  const el = document.getElementById('searchInput');
+  return el ? el.value.trim() : '';
+}
+
+function allStaples() { return state.sections.flatMap(x => x.items); }
+
+// Below the results: common items in the searched group that aren't staples
+// yet, things you've bought before, and whatever you typed.
+function renderSearchAdd(root, q, matches, best) {
+  const el = document.createElement('section');
+  el.className = 'search-add';
+  const names = state.sections.map(x => x.name);
+  const sugg = Search.suggestions(q, allStaples().filter(n => !state.wildAdded[n]), state.history, 10)
+    .map(x => ({ ...x, section: names.includes(x.section) ? x.section : Search.guessSection(x.name, names, state.history) }));
+  const typed = Search.titleCase(q);
+  const exact = findStaple(typed);
+  const oneOff = exact && state.wildAdded[exact];
+  // Offer what you typed as a new staple, unless it's a food group ("fruit"),
+  // a staple's name already starts with it ("ched", "tomato"), or a chip has it.
+  const offerTyped = oneOff || (!exact && !Search.groupsFor(q).length && best < 4
+    && !sugg.some(x => Search.norm(x.name) === Search.norm(typed)));
+
+  let html = matches ? '' : `<p class="search-note">None of your staples match “${esc(q)}”.</p>`;
+  if (sugg.length || offerTyped) {
+    html += `<div class="sec-head" style="margin-top:${matches ? 28 : 18}px"><h2>Add to staples</h2></div>`;
+  }
+  el.innerHTML = html;
+  if (sugg.length) {
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    sugg.forEach(x => {
+      const b = document.createElement('button');
+      b.className = 'btn chip'; b.type = 'button';
+      b.innerHTML = `+ ${esc(x.name)}<span class="why">${esc([x.section, x.why].filter(Boolean).join(' · '))}</span>`;
+      b.setAttribute('aria-label', `Add ${x.name} to staples in ${x.section}`);
+      b.onclick = () => addStaple(x.name, x.section);
+      chips.appendChild(b);
+    });
+    el.appendChild(chips);
+  }
+  if (offerTyped) {
+    const row = document.createElement('div');
+    row.className = 'custom-add';
+    const guess = Search.guessSection(typed, names, state.history);
+    row.innerHTML = `<input class="field" value="${esc(typed)}" aria-label="New staple name">
+      <select class="field" aria-label="Category">${names.map(n => `<option${n === guess ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <button class="btn" type="button">Add</button>`;
+    const [inp, sel, go] = row.children;
+    const commit = () => { const v = Search.titleCase(inp.value); if (v) addStaple(v, sel.value); };
+    go.onclick = commit;
+    inp.onkeydown = e => { if (e.key === 'Enter') commit(); };
+    el.appendChild(row);
+  }
+  root.appendChild(el);
+}
+
+function addStaple(name, sectionName) {
+  const ex = findStaple(name);
+  if (ex && !state.wildAdded[ex]) { toast(`${ex} is already a staple`); return; }
+  const before = JSON.stringify(state);
+  if (ex) {
+    // A one-off item (from a recipe or wild card) you want to keep.
+    delete state.wildAdded[ex];
+  } else {
+    const sec = state.sections.find(x => x.name === sectionName) || state.sections[0];
+    sec.items.push(name);
+  }
+  save(); renderInventory(); updateDock();
+  toast(`Added ${ex || name} to ${stapleSection(ex || name)}`, {
+    label: 'Undo',
+    fn: () => { state = normalize(JSON.parse(before)); save(); renderInventory(); updateDock(); }
+  });
+}
+
+(function () {
+  const input = document.getElementById('searchInput');
+  const clear = document.getElementById('searchClear');
+  const bar = document.getElementById('searchBar');
+  const refresh = () => {
+    clear.classList.toggle('hidden', !input.value);
+    renderInventory();
+    // If you'd scrolled down, bring the results into view under the bar.
+    if (window.scrollY > bar.offsetTop) window.scrollTo(0, bar.offsetTop);
+  };
+  input.addEventListener('input', refresh);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') input.blur();
+    if (e.key === 'Escape') { input.value = ''; refresh(); }
+  });
+  clear.onclick = () => { input.value = ''; refresh(); input.focus(); };
+})();
 
 function renderList() {
   const body = document.getElementById('listBody');
@@ -1767,6 +1914,7 @@ function setMode(next) {
   const inv = mode === 'inventory';
   document.getElementById('inventory').classList.toggle('hidden', !inv);
   document.getElementById('toolbar').classList.toggle('hidden', !inv);
+  document.getElementById('searchBar').classList.toggle('hidden', !inv);
   document.getElementById('listView').classList.toggle('hidden', mode !== 'list');
   document.getElementById('historyView').classList.toggle('hidden', mode !== 'history');
   document.getElementById('receiptView').classList.toggle('hidden', mode !== 'receipt');
