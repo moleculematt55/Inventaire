@@ -1,4 +1,4 @@
-const CACHE = 'inventaire-v9';
+const CACHE = 'inventaire-v10';
 const CORE = [
   './',
   'index.html',

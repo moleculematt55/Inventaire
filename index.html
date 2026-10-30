@@ -330,6 +330,7 @@
   .tile .sale, .for.sale { color: #8A5A52; font-weight: 600; }
   .tile[aria-pressed="true"] .sale { color: #FFD9CF; }
   .tile .sale { display: block; font-size: 11px; margin-top: 4px; }
+  .store-file { margin: 2px 0 0 -14px; }
   .store-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
   .store-status { margin: 6px 0 0; font-size: 13px; color: #6A7885; }
   .deal-price { font-weight: 600; color: #8A5A52; white-space: nowrap; }
@@ -429,6 +430,7 @@
   <input type="file" accept="image/*" id="receiptFile" hidden>
   <input type="file" accept="image/*" capture="environment" id="photoCam" hidden>
   <input type="file" accept="image/*" multiple id="photoMulti" hidden>
+  <input type="file" accept="application/pdf,image/*" multiple id="adFile" hidden>
 </div>
 
 <div class="dock">
@@ -1924,18 +1926,48 @@ function enabledStores() {
 const shortStore = name => String(name).replace(/\s+(Marketplace|Market|Supermarket|Supermarkets|Grocery|Foods)$/i, '').trim() || name;
 
 // Reads one store's ad and saves it. Returns the number of deals on staples.
-async function fetchAd(st) {
-  state.adTried[st.id] = Date.now();
-  save();
-  const out = await Deals.read(st, state.sections);
+async function fetchAd(st, files) {
+  if (!files) { state.adTried[st.id] = Date.now(); save(); }
+  const out = files ? await Deals.readFiles(st, files, state.sections) : await Deals.read(st, state.sections);
   state.ads[st.id] = {
     store: st.name, storeShort: shortStore(st.name),
     from: out.valid_from, to: out.valid_to, fetched: Date.now(),
     deals: out.deals
   };
   save();
-  return out.deals.filter(d => findStaple(Suggest.dealItem(state, d))).length;
+  // How many different staples are on sale (five apple deals count once).
+  return new Set(out.deals.map(d => findStaple(Suggest.dealItem(state, d))).filter(n => n && !state.wildAdded[n])).size;
 }
+
+// Keep the screen on during a long read; a sleeping phone drops the connection.
+async function keepAwake() {
+  try { return navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (e) { return null; }
+}
+
+let adFileStore = null;
+function addAdFromFile(st) {
+  if (!Claude.getKey()) { openKeySheet(); return; }
+  adFileStore = st;
+  const f = document.getElementById('adFile');
+  f.value = '';
+  f.click();
+}
+document.getElementById('adFile').onchange = async e => {
+  const files = [...(e.target.files || [])].slice(0, 8);
+  const st = adFileStore;
+  if (!files.length || !st) return;
+  const lock = await keepAwake();
+  const busy = showBusy('ad', `Reading the ${st.name} ad`, 'Claude is reading every page. This can take a minute or two. Keep the app open.');
+  try {
+    const n = await fetchAd(st, files);
+    busy.close();
+    renderDeals();
+    toast(`${shortStore(st.name)}: ${plural(n, 'staple')} on sale`);
+  } catch (err) {
+    busy.close();
+    showAIError(err, 'ad');
+  } finally { if (lock) lock.release().catch(() => {}); }
+};
 
 // An ad needs fetching if there isn't one, or the one we have has ended.
 function adStale(st, now) {
@@ -1951,18 +1983,21 @@ async function refreshAds() {
     if (!ok || !Claude.getKey()) return;
   }
   const done = [], failed = [];
+  const lock = await keepAwake();
   for (const st of stores) {
     const busy = showBusy('ad', `Reading the ${st.name} ad`, 'Claude is finding this week\'s flyer and reading every page. This can take a minute or two. Keep the app open.');
     try { const n = await fetchAd(st); done.push(`${shortStore(st.name)}: ${plural(n, 'staple')} on sale`); }
     catch (err) {
-      if (err && (err.code === 'nokey' || err.code === 'badkey' || err.code === 'credit' || err.code === 'offline')) { busy.close(); showAIError(err, 'ad'); renderDeals(); return; }
+      if (err && (err.code === 'nokey' || err.code === 'badkey' || err.code === 'credit' || err.code === 'offline')) { busy.close(); if (lock) lock.release().catch(() => {}); showAIError(err, 'ad'); renderDeals(); return; }
       failed.push(`${st.name}: ${(err && err.message) || 'something went wrong'}`);
     }
     busy.close();
   }
+  if (lock) lock.release().catch(() => {});
   if (mode === 'deals') renderDeals(); else if (mode === 'inventory') renderInventory();
   if (failed.length) {
-    await confirmSheet({ title: done.length ? 'Some ads couldn\'t be read' : 'Couldn\'t read the ads', body: failed.map(f => `<p>${esc(f)}</p>`).join('') + (done.length ? `<p>${esc(done.join(' · '))}</p>` : ''), yes: 'OK', no: false });
+    await confirmSheet({ title: done.length ? 'Some ads couldn\'t be read' : 'Couldn\'t read the ads', body: failed.map(f => `<p>${esc(f)}</p>`).join('') + (done.length ? `<p>${esc(done.join(' · '))}</p>` : '')
+      + `<p>You can also save the ad from the store's website or email (a PDF or screenshots) and use <b>Add ad from a file</b> under that store.</p>`, yes: 'OK', no: false });
   } else if (done.length) toast(done.join(' · '));
 }
 
@@ -2026,8 +2061,13 @@ function renderDeals() {
     const el = document.createElement('section');
     const dates = ad ? Deals.shortDates(ad) : '';
     el.innerHTML = `<div class="sec-head store-head"><h2>${esc(st.name)}</h2><span class="sec-count">${esc(dates)}</span></div>`;
+    const fileBtn = document.createElement('button');
+    fileBtn.className = 'btn quiet store-file'; fileBtn.type = 'button';
+    fileBtn.textContent = 'Add ad from a file';
+    fileBtn.onclick = () => addAdFromFile(st);
     if (!ad) {
-      el.innerHTML += `<p class="store-status">No ad loaded yet. Tap Get this week's ads.</p>`;
+      el.innerHTML += `<p class="store-status">No ad loaded yet. Tap Get this week's ads, or add the ad's PDF or screenshots yourself.</p>`;
+      el.appendChild(fileBtn);
       body.appendChild(el); return;
     }
     if (!Deals.isCurrent(ad, now)) {
@@ -2077,6 +2117,7 @@ function renderDeals() {
       if (collapsed) box.ontoggle = () => { box.open ? openDealGroups.add(st.id) : openDealGroups.delete(st.id); };
       el.appendChild(box);
     };
+    el.appendChild(fileBtn);
     block('On your staples', mine, false);
     block('Everything else in the ad', rest, true);
     if (!mine.length) {

@@ -14,7 +14,7 @@
     {
       id: 'daves', name: 'Dave\'s Marketplace',
       url: 'https://www.davesmarketplace.com/WeeklySpecials/',
-      hint: 'This page links to the current "Weekly Specials" PDF (a link like /content/weeklyspecials/MM-DD-YYYY.pdf) and a "Mid-Week Specials" PDF. Read the Weekly Specials PDF. Also read the Mid-Week Specials PDF if its dates include today, and put its dates in each deal\'s note.'
+      hint: 'This page links to the current "Weekly Specials" PDF (a link like /content/weeklyspecials/MM-DD-YYYY.pdf). Read that one only; skip the Mid-Week Specials.'
     },
     {
       id: 'marketbasket', name: 'Market Basket',
@@ -73,10 +73,35 @@ ${staples}`;
 
   async function read(store, sections) {
     const today = new Date().toLocaleDateString('en-CA');
-    const out = await Claude.ask({
-      files: [], schema: SCHEMA, what: 'ad', tools: TOOLS, maxTokens: 20000,
+    const go = () => Claude.ask({
+      files: [], schema: SCHEMA, what: 'ad', tools: TOOLS, maxTokens: 20000, stream: true,
       prompt: () => buildPrompt(store, sections, today)
     });
+    let out;
+    try { out = await go(); }
+    catch (e) {
+      if (e.code !== 'network' || !navigator.onLine) throw e;
+      out = await go(); // one automatic retry after a dropped connection
+    }
+    return check(out, store);
+  }
+
+  // The ad saved as a PDF (from the store's site or email) or screenshots.
+  async function readFiles(store, files, sections) {
+    const today = new Date().toLocaleDateString('en-CA');
+    const out = await Claude.ask({
+      files, slice: false, schema: SCHEMA, what: 'ad', maxTokens: 20000, stream: true,
+      prompt: n => `Today is ${today}. ${n > 1 ? 'These files are' : 'This is'} the weekly ad for ${store.name}. Read every page.
+
+The flyer layout is visual, so pair each price with the item it sits next to; don't guess when a price can't be tied to an item. Skip alcohol, gift cards, and store announcements. Give the sale's real dates as printed. If this isn't a store ad, set found to false.
+
+The shopper's staples, by category:
+${sections.map(s => `${s.name}: ${s.items.join(', ')}`).join('\n')}`
+    });
+    return check(out, store);
+  }
+
+  function check(out, store) {
     if (!out || !Array.isArray(out.deals)) throw new Claude.AIError('parse', 'Claude couldn\'t make sense of the ad. Try again later.');
     if (!out.found || !out.deals.length) throw new Claude.AIError('notfound', `Couldn't find this week's ad for ${store.name}` + (out.problem ? `: ${out.problem}` : '.'));
     return out;
@@ -108,7 +133,7 @@ ${staples}`;
     return '';
   }
 
-  const api = { read, PRESETS, SCHEMA, TOOLS, buildPrompt, isCurrent, endsAt, shortDates, day };
+  const api = { read, readFiles, PRESETS, SCHEMA, TOOLS, buildPrompt, isCurrent, endsAt, shortDates, day };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Deals = api;
 })(typeof self !== 'undefined' ? self : this);

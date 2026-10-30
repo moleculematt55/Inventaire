@@ -252,7 +252,10 @@
   function dealItem(state, d) {
     const low = {};
     state.sections.forEach(sec => sec.items.forEach(i => { low[i.toLowerCase()] = i; }));
-    return low[String(d.match || '').toLowerCase()] || low[String(d.name || '').toLowerCase()] || String(d.name || d.item || '').trim();
+    const hit = low[String(d.match || '').toLowerCase()] || low[String(d.name || '').toLowerCase()];
+    if (hit) return hit;
+    const n = String(d.name || d.item || '').trim();
+    return n ? n[0].toUpperCase() + n.slice(1) : n;
   }
 
   // item name -> [{store, price, unit, price_text, note, item}] from ads running now.
