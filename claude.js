@@ -81,15 +81,17 @@
     constructor(code, message) { super(message); this.code = code; }
   }
 
-  // Send photos plus instructions; get back JSON matching `schema`.
-  //   files:   File objects, in order
+  // Send photos and/or instructions; get back JSON matching `schema`.
+  //   files:   File objects, in order (may be empty)
   //   slice:   cut tall photos into overlapping sections (receipts)
   //   prompt:  (imageCount) => instruction text
-  //   what:    'receipt' | 'recipe', for error messages
-  async function ask({ files, slice, prompt, schema, what, maxTokens }) {
+  //   what:    'receipt' | 'recipe' | 'photo' | 'ad', for error messages
+  //   tools:   server tools Claude may use, e.g. web_fetch to read a store's flyer
+  async function ask({ files, slice, prompt, schema, what, maxTokens, tools }) {
+    files = files || [];
     const key = getKey();
     if (!key) throw new AIError('nokey', 'Add your API key first.');
-    if (!navigator.onLine) throw new AIError('offline', `Reading a ${what} needs an internet connection. Nothing was sent. Try again once you're online.`);
+    if (!navigator.onLine) throw new AIError('offline', `Reading ${what === 'ad' ? 'the ads' : 'a ' + what} needs an internet connection. Nothing was sent. Try again once you're online.`);
 
     let images = [];
     try { for (const f of files) images = images.concat(await prepareImage(f, slice)); }
@@ -98,7 +100,37 @@
 
     const content = images.map(data => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }));
     content.push({ type: 'text', text: prompt(images.length) });
+    const messages = [{ role: 'user', content }];
+    const request = { model: MODEL, max_tokens: maxTokens || 8000, output_config: { format: { type: 'json_schema', schema } } };
+    if (tools && tools.length) request.tools = tools;
 
+    // Server tools (like fetching a web page) can pause a long turn; resume it.
+    let body = null;
+    for (let round = 0; round < 5; round++) {
+      body = await send(key, { ...request, messages }, what);
+      if (body.stop_reason !== 'pause_turn') break;
+      messages.push({ role: 'assistant', content: body.content });
+    }
+
+    if (body && body.stop_reason === 'max_tokens') {
+      throw new AIError('parse', what === 'receipt'
+        ? 'That receipt was too long to read in one go. Try photographing it in two halves.'
+        : what === 'ad' ? 'That ad was too long to read in one go.'
+        : 'That was too much to read in one go. Try fewer pages at a time.');
+    }
+    // The answer is the last text block that parses (earlier text may be
+    // Claude saying what it's about to fetch).
+    const texts = (body && Array.isArray(body.content) ? body.content : []).filter(c => c.type === 'text').map(c => c.text);
+    const tries = [texts.join('')].concat(texts.slice().reverse());
+    for (const t of tries) {
+      try { return JSON.parse(String(t || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, '')); } catch (e) {}
+    }
+    throw new AIError('parse', what === 'ad'
+      ? 'Claude couldn\'t make sense of the ad. Try again later.'
+      : 'Claude couldn\'t make sense of that photo. Try a straighter, closer shot in good light.');
+  }
+
+  async function send(key, payload, what) {
     let res;
     try {
       res = await fetch(API_URL, {
@@ -109,17 +141,11 @@
           'anthropic-version': '2023-06-01',
           'anthropic-dangerous-direct-browser-access': 'true'
         },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: maxTokens || 8000,
-          output_config: { format: { type: 'json_schema', schema } },
-          messages: [{ role: 'user', content }]
-        })
+        body: JSON.stringify(payload)
       });
     } catch (e) {
       throw new AIError('network', 'Couldn\'t reach Claude. Check your connection and try again.');
     }
-
     let body = null;
     try { body = await res.json(); } catch (e) {}
     if (!res.ok) {
@@ -130,15 +156,7 @@
       if (res.status === 413) throw new AIError('image', `That photo is too large. Try a closer shot of just the ${what}.`);
       throw new AIError('api', `Couldn't read the ${what}` + (msg ? ': ' + msg : '.'));
     }
-
-    if (body && body.stop_reason === 'max_tokens') {
-      throw new AIError('parse', what === 'receipt'
-        ? 'That receipt was too long to read in one go. Try photographing it in two halves.'
-        : 'That was too much to read in one go. Try fewer pages at a time.');
-    }
-    const text = body && Array.isArray(body.content) && body.content.filter(c => c.type === 'text').map(c => c.text).join('');
-    try { return JSON.parse(String(text || '').replace(/^```(?:json)?\s*|\s*```$/g, '')); }
-    catch (e) { throw new AIError('parse', 'Claude couldn\'t make sense of that photo. Try a straighter, closer shot in good light.'); }
+    return body || {};
   }
 
   const api = { ask, getKey, setKey, planSlices, MODEL, AIError };

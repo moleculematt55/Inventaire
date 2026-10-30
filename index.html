@@ -184,7 +184,8 @@
     border-radius: 2px; opacity: 0; pointer-events: none; transition: opacity 200ms; z-index: 20;
   }
   .toast.on { opacity: 1; pointer-events: auto; }
-  .toast { display: flex; align-items: center; gap: 4px; white-space: nowrap; max-width: calc(100vw - 32px); }
+  .toast { display: flex; align-items: center; gap: 4px; width: max-content; max-width: calc(100vw - 32px); }
+  .toast button { flex: none; white-space: nowrap; }
   .toast button {
     background: none; border: 0; color: #9EC2F0; font-family: var(--body);
     font-size: 13px; font-weight: 600; padding: 6px 4px 6px 12px; cursor: pointer;
@@ -325,6 +326,19 @@
   .list-item.pick .verdict.stocked { color: #57704F; }
   .list-item.pick:disabled .verdict { color: #B3BEC6; }
 
+  /* Deals */
+  .tile .sale, .for.sale { color: #8A5A52; font-weight: 600; }
+  .tile[aria-pressed="true"] .sale { color: #FFD9CF; }
+  .tile .sale { display: block; font-size: 11px; margin-top: 4px; }
+  .store-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .store-status { margin: 6px 0 0; font-size: 13px; color: #6A7885; }
+  .deal-price { font-weight: 600; color: #8A5A52; white-space: nowrap; }
+  .list-item.pick .deal-price { margin-left: auto; font-size: 14px; }
+  .store-opts { display: grid; gap: 4px; margin: 12px 0; }
+  .store-opts label { display: flex; align-items: center; gap: 10px; font-size: 15px; min-height: 40px; }
+  .store-opts input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--cobalt); }
+  .store-add { display: grid; gap: 6px; margin-top: 8px; }
+
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -341,6 +355,7 @@
     <button class="btn" id="editBtn" aria-pressed="false">Edit staples</button>
     <button class="btn" id="historyBtn">History</button>
     <button class="btn" id="recipesBtn">Recipes</button>
+    <button class="btn" id="dealsBtn">Deals</button>
     <span class="spacer"></span>
     <button class="btn quiet" id="exportBtn">Back up</button>
     <button class="btn quiet" id="importBtn">Restore</button>
@@ -399,6 +414,14 @@
     <div id="recipeEditBody"></div>
   </div>
 
+  <div id="dealsView" class="hidden">
+    <div class="hist-bar">
+      <button class="btn" id="refreshAdsBtn" type="button">Get this week's ads</button>
+      <button class="btn quiet" id="storesBtn" type="button">Stores</button>
+    </div>
+    <div id="dealsBody"></div>
+  </div>
+
   <div id="fridgeView" class="hidden">
     <div id="fridgeBody"></div>
   </div>
@@ -442,7 +465,26 @@
 
 <dialog class="confirm" id="busy">
   <h3><span id="busyWhat">Reading receipt</span><span class="busy-dots"></span></h3>
-  <p>This usually takes 15–40 seconds. Keep the app open.</p>
+  <p id="busyNote">This usually takes 15–40 seconds. Keep the app open.</p>
+</dialog>
+
+<dialog class="confirm" id="storeSheet">
+  <h3>Your stores</h3>
+  <p>Inventaire reads the weekly ad for each store you tick. Each store costs a few cents a week on your API account.</p>
+  <div class="store-opts" id="storeOpts"></div>
+  <label class="chk" style="display:flex;gap:10px;align-items:center;font-size:14px;min-height:40px">
+    <input type="checkbox" id="adAuto" style="width:20px;height:20px;accent-color:var(--cobalt)"> Get new ads automatically each week
+  </label>
+  <p style="margin-top:14px"><b>Add another store</b>: its name and the web page that shows or links to its weekly ad.</p>
+  <div class="store-add">
+    <input class="field" id="newStoreName" placeholder="Store name" autocomplete="off">
+    <input class="field" id="newStoreUrl" placeholder="https://… weekly ad page" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false">
+  </div>
+  <p id="storeNote" class="bucket-note"></p>
+  <div class="dialog-actions">
+    <button class="btn" id="storeCancel" type="button">Cancel</button>
+    <button class="complete" id="storeSave" type="button">Save</button>
+  </div>
 </dialog>
 
 <dialog class="confirm" id="photoSheet">
@@ -463,6 +505,7 @@
 <script src="recipe.js"></script>
 <script src="pantry.js"></script>
 <script src="search.js"></script>
+<script src="deals.js"></script>
 
 <script>
 const KEY = 'kitchen-inventory-v1';
@@ -486,7 +529,7 @@ const RDRAFT_KEY = 'inventaire-recipe-draft';
 const money = n => '$' + (Math.round(n * 100) / 100).toFixed(2);
 
 function freshState() {
-  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {}, receiptMap: {}, recipes: [], ingredientMap: {}, listFor: {}, fridgeMap: {} };
+  return { sections: SEED.map(([name, items]) => ({ name, items: items.slice() })), needed: {}, got: {}, history: [], wildAdded: {}, receiptMap: {}, recipes: [], ingredientMap: {}, listFor: {}, fridgeMap: {}, ads: {}, dealStores: ['daves', 'marketbasket'], customStores: [], adAuto: true, adTried: {} };
 }
 
 function load() {
@@ -511,6 +554,11 @@ function normalize(s) {
   s.ingredientMap = s.ingredientMap || {};
   s.listFor = s.listFor || {};
   s.fridgeMap = s.fridgeMap || {};
+  s.ads = s.ads || {};
+  s.dealStores = Array.isArray(s.dealStores) ? s.dealStores : ['daves', 'marketbasket'];
+  s.customStores = Array.isArray(s.customStores) ? s.customStores : [];
+  s.adAuto = s.adAuto !== false;
+  s.adTried = s.adTried || {};
   return s;
 }
 
@@ -646,6 +694,7 @@ function renderInventory() {
   const root = document.getElementById('inventory');
   root.innerHTML = '';
   const analysis = Suggest.analyze(state);
+  const sales = Suggest.activeDeals(state);
   const q = searchQuery();
   if (!q) {
     const cta = document.createElement('div');
@@ -684,7 +733,9 @@ function renderInventory() {
       const b = document.createElement('button');
       b.className = 'tile'; b.type = 'button';
       const ft = forText(item);
-      b.innerHTML = esc(item) + (ft ? `<span class="why">${esc(ft)}</span>` : '');
+      const sale = (sales.get(item) || [])[0];
+      b.innerHTML = esc(item) + (ft ? `<span class="why">${esc(ft)}</span>` : '')
+        + (sale ? `<span class="sale">Sale ${esc(sale.price_text)} · ${esc(sale.store)}</span>` : '');
       b.setAttribute('aria-pressed', state.needed[item] ? 'true' : 'false');
       b.setAttribute('aria-label', item + (state.needed[item] ? ' — needed' : ' — stocked'));
       b.onclick = () => toggleNeeded(item);
@@ -828,6 +879,7 @@ function renderList() {
   const body = document.getElementById('listBody');
   body.innerHTML = '';
   renderComplete();
+  const listSales = Suggest.activeDeals(state);
   if (!neededCount()) {
     body.innerHTML = `<div class="empty">
       <p class="big">Nothing marked yet.</p>
@@ -848,8 +900,10 @@ function renderList() {
       const lpText = !lp ? '' : lp.unitPrice && lp.unit && lp.unit !== 'ea'
         ? `${money(lp.unitPrice)}/${lp.unit}` : money(lp.price / (lp.qty || 1));
       const ft = forText(item);
+      const st = Suggest.saleText(state, item, Date.now(), listSales);
       b.innerHTML = `<span class="box"></span><span class="lbl"><span class="label">${esc(item)}</span>`
-        + (ft ? `<span class="for">${esc(ft)}</span>` : '') + `</span>`
+        + (ft ? `<span class="for">${esc(ft)}</span>` : '')
+        + (st ? `<span class="for sale">${esc(st)}</span>` : '') + `</span>`
         + (lpText ? `<span class="lp" title="Last price paid">${esc(lpText)}</span>` : '');
       b.onclick = () => { state.got[item] = !state.got[item]; save(); renderList(); };
       g.appendChild(b);
@@ -1114,8 +1168,9 @@ async function showAIError(err, what) {
   }
 }
 
-function showBusy(what, label) {
+function showBusy(what, label, note) {
   document.getElementById('busyWhat').textContent = label || 'Reading ' + what;
+  document.getElementById('busyNote').textContent = note || 'This usually takes 15–40 seconds. Keep the app open.';
   const busy = document.getElementById('busy');
   busy.oncancel = ev => ev.preventDefault();
   busy.showModal();
@@ -1858,6 +1913,186 @@ function saveFridge() {
   });
 }
 
+// ---------- Weekly ads ----------
+
+function storeList() {
+  return Deals.PRESETS.concat(state.customStores);
+}
+function enabledStores() {
+  return storeList().filter(st => state.dealStores.includes(st.id));
+}
+const shortStore = name => String(name).replace(/\s+(Marketplace|Market|Supermarket|Supermarkets|Grocery|Foods)$/i, '').trim() || name;
+
+// Reads one store's ad and saves it. Returns the number of deals on staples.
+async function fetchAd(st) {
+  state.adTried[st.id] = Date.now();
+  save();
+  const out = await Deals.read(st, state.sections);
+  state.ads[st.id] = {
+    store: st.name, storeShort: shortStore(st.name),
+    from: out.valid_from, to: out.valid_to, fetched: Date.now(),
+    deals: out.deals
+  };
+  save();
+  return out.deals.filter(d => findStaple(Suggest.dealItem(state, d))).length;
+}
+
+// An ad needs fetching if there isn't one, or the one we have has ended.
+function adStale(st, now) {
+  const ad = state.ads[st.id];
+  return !ad || now >= Deals.endsAt(ad);
+}
+
+async function refreshAds() {
+  const stores = enabledStores();
+  if (!stores.length) { openStoreSheet(); return; }
+  if (!Claude.getKey()) {
+    const ok = await openKeySheet();
+    if (!ok || !Claude.getKey()) return;
+  }
+  const done = [], failed = [];
+  for (const st of stores) {
+    const busy = showBusy('ad', `Reading the ${st.name} ad`, 'Claude is finding this week\'s flyer and reading every page. This can take a minute or two. Keep the app open.');
+    try { const n = await fetchAd(st); done.push(`${shortStore(st.name)}: ${plural(n, 'staple')} on sale`); }
+    catch (err) {
+      if (err && (err.code === 'nokey' || err.code === 'badkey' || err.code === 'credit' || err.code === 'offline')) { busy.close(); showAIError(err, 'ad'); renderDeals(); return; }
+      failed.push(`${st.name}: ${(err && err.message) || 'something went wrong'}`);
+    }
+    busy.close();
+  }
+  if (mode === 'deals') renderDeals(); else if (mode === 'inventory') renderInventory();
+  if (failed.length) {
+    await confirmSheet({ title: done.length ? 'Some ads couldn\'t be read' : 'Couldn\'t read the ads', body: failed.map(f => `<p>${esc(f)}</p>`).join('') + (done.length ? `<p>${esc(done.join(' · '))}</p>` : ''), yes: 'OK', no: false });
+  } else if (done.length) toast(done.join(' · '));
+}
+
+// Once a week, quietly, when the app opens.
+async function autoRefreshAds() {
+  if (!state.adAuto || !Claude.getKey() || !navigator.onLine) return;
+  const now = Date.now();
+  for (const st of enabledStores()) {
+    if (!adStale(st, now) || now - (state.adTried[st.id] || 0) < 12 * 36e5) continue;
+    try {
+      const n = await fetchAd(st);
+      if (mode === 'inventory') renderInventory();
+      else if (mode === 'deals') renderDeals();
+      else if (mode === 'list') renderList();
+      toast(`New ${shortStore(st.name)} ad is in · ${plural(n, 'staple')} on sale`);
+    } catch (e) { /* try again in 12 hours, or tap Get this week's ads */ }
+  }
+}
+
+function openStoreSheet() {
+  const d = document.getElementById('storeSheet');
+  const opts = document.getElementById('storeOpts');
+  const note = document.getElementById('storeNote');
+  note.textContent = '';
+  opts.innerHTML = storeList().map(st => `<label><input type="checkbox" value="${esc(st.id)}"${state.dealStores.includes(st.id) ? ' checked' : ''}> ${esc(st.name)}</label>`).join('');
+  document.getElementById('adAuto').checked = state.adAuto;
+  const nm = document.getElementById('newStoreName'), url = document.getElementById('newStoreUrl');
+  nm.value = ''; url.value = '';
+  document.getElementById('storeCancel').onclick = () => d.close();
+  document.getElementById('storeSave').onclick = () => {
+    const name = nm.value.trim(), link = url.value.trim();
+    const ticked = [...opts.querySelectorAll('input:checked')].map(i => i.value);
+    if (name || link) {
+      if (!name || !/^https?:\/\/[^\s.]+\.[^\s]+$/i.test(link)) { note.textContent = 'To add a store, give its name and a full web address starting with https://'; return; }
+      const id = 'c' + Date.now().toString(36);
+      state.customStores.push({ id, name, url: link, hint: '' });
+      ticked.push(id); // a store you just added is on
+    }
+    state.dealStores = ticked;
+    // Drop ads for stores you've turned off.
+    Object.keys(state.ads).forEach(id => { if (!state.dealStores.includes(id)) delete state.ads[id]; });
+    state.adAuto = document.getElementById('adAuto').checked;
+    save();
+    d.close();
+    if (mode === 'deals') renderDeals();
+  };
+  d.showModal();
+}
+
+function renderDeals() {
+  const body = document.getElementById('dealsBody');
+  body.innerHTML = '';
+  const stores = enabledStores();
+  if (!stores.length) {
+    body.innerHTML = `<div class="empty"><p class="big">No stores yet.</p><p>Tap Stores to pick where you shop.</p></div>`;
+    return;
+  }
+  const now = Date.now();
+  stores.forEach(st => {
+    const ad = state.ads[st.id];
+    const el = document.createElement('section');
+    const dates = ad ? Deals.shortDates(ad) : '';
+    el.innerHTML = `<div class="sec-head store-head"><h2>${esc(st.name)}</h2><span class="sec-count">${esc(dates)}</span></div>`;
+    if (!ad) {
+      el.innerHTML += `<p class="store-status">No ad loaded yet. Tap Get this week's ads.</p>`;
+      body.appendChild(el); return;
+    }
+    if (!Deals.isCurrent(ad, now)) {
+      const upcoming = Deals.day(ad.from) > now;
+      el.innerHTML += `<p class="store-status">${upcoming ? 'This ad hasn\'t started yet. Its prices show up on your list once it does.' : 'This ad has ended. Tap Get this week\'s ads for the new one.'}</p>`;
+    }
+    const rows = ad.deals.map(d => ({ d, name: Suggest.dealItem(state, d) }));
+    const mine = rows.filter(r => findStaple(r.name) && !state.wildAdded[findStaple(r.name)]);
+    const rest = rows.filter(r => !mine.includes(r));
+    const block = (title, list, collapsed) => {
+      if (!list.length) return;
+      const box = document.createElement(collapsed ? 'details' : 'div');
+      if (collapsed) box.className = 'bucket';
+      const head = `<div class="sec-head" style="margin-top:${collapsed ? 0 : 14}px"><h2>${esc(title)}</h2><span class="sec-count">${list.length}</span></div>`;
+      box.innerHTML = collapsed ? `<summary>${head}</summary>` : head;
+      list.sort((a, b) => a.name.localeCompare(b.name)).forEach(({ d, name }) => {
+        const b = document.createElement('button');
+        b.className = 'list-item pick'; b.type = 'button';
+        const on = !!state.needed[name];
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const lp = Suggest.lastPrice(state.history, name);
+        let paid = '';
+        if (lp && d.price > 0) {
+          if (d.unit === 'lb' && lp.unit === 'lb' && lp.unitPrice) paid = `you paid $${lp.unitPrice.toFixed(2)}/lb`;
+          else if (d.unit === 'ea' && (!lp.unit || lp.unit === 'ea')) paid = `you paid $${(lp.price / (lp.qty || 1)).toFixed(2)}`;
+        }
+        const sub = [d.item, d.note, paid].filter(Boolean).join(' · ');
+        b.innerHTML = `<span class="box"></span><span class="lbl"><span class="label">${esc(name)}</span>${sub ? `<span class="for">${esc(sub)}</span>` : ''}</span><span class="deal-price">${esc(d.price_text)}</span>`;
+        b.setAttribute('aria-label', `${name}, ${d.price_text}${on ? ', on your list' : ''}`);
+        b.onclick = () => {
+          if (state.needed[name]) clearItem(name);
+          else {
+            if (!stapleSection(name)) {
+              const names = state.sections.map(x => x.name);
+              const secName = names.includes(d.section) ? d.section : Search.guessSection(name, names, state.history);
+              (state.sections.find(x => x.name === secName) || state.sections[0]).items.push(name);
+              state.wildAdded[name] = true; // one-off: leaves your categories once bought
+            }
+            state.needed[name] = true;
+            delete state.got[name];
+          }
+          save(); renderDeals(); updateDock();
+        };
+        box.appendChild(b);
+      });
+      if (collapsed && openDealGroups.has(st.id)) box.open = true;
+      if (collapsed) box.ontoggle = () => { box.open ? openDealGroups.add(st.id) : openDealGroups.delete(st.id); };
+      el.appendChild(box);
+    };
+    block('On your staples', mine, false);
+    block('Everything else in the ad', rest, true);
+    if (!mine.length) {
+      const p = document.createElement('p'); p.className = 'store-status';
+      p.textContent = 'None of your staples are on sale in this ad.';
+      el.insertBefore(p, el.children[1] || null);
+    }
+    body.appendChild(el);
+  });
+}
+const openDealGroups = new Set();
+
+document.getElementById('dealsBtn').onclick = () => setMode('deals');
+document.getElementById('refreshAdsBtn').onclick = refreshAds;
+document.getElementById('storesBtn').onclick = openStoreSheet;
+
 function listAsText() {
   const lines = [];
   state.sections.forEach(sec => {
@@ -1894,7 +2129,7 @@ function updateDock() {
   } else if (mode === 'recipeEdit') {
     btn.textContent = 'Save recipe';
     copy.classList.add('hidden');
-  } else if (mode === 'recipes') {
+  } else if (mode === 'recipes' || mode === 'deals') {
     btn.textContent = n ? `Show shopping list · ${n}` : 'Back to inventory';
     copy.classList.add('hidden');
   } else if (mode === 'inventory') {
@@ -1922,6 +2157,7 @@ function setMode(next) {
   document.getElementById('recipeView').classList.toggle('hidden', mode !== 'recipe');
   document.getElementById('recipeEditView').classList.toggle('hidden', mode !== 'recipeEdit');
   document.getElementById('fridgeView').classList.toggle('hidden', mode !== 'fridge');
+  document.getElementById('dealsView').classList.toggle('hidden', mode !== 'deals');
   document.getElementById('lede').textContent = {
     inventory: "Walk the fridge and pantry. Tap anything you're out of — it turns blue. The blue ones become your shopping list.",
     list: "Check things off as they go in the cart. When you're done, complete the trip.",
@@ -1930,6 +2166,7 @@ function setMode(next) {
     recipes: "Pick a recipe to put what you need for it on your shopping list.",
     recipe: "Checked ingredients go on your list. Things you probably have are left unchecked. Tap to change.",
     recipeEdit: "Check how each ingredient was matched to your staples. Your choices are remembered for the next recipe.",
+    deals: "This week's sales at your stores. Tap a deal to put it on your list; sale prices also show on your tiles and list.",
     fridge: "Here's what Claude could see. It only knows what's visible, so check anything marked not seen. Ticked items go on your list."
   }[mode];
   if (inv) renderInventory(); else if (mode === 'list') renderList();
@@ -1938,6 +2175,7 @@ function setMode(next) {
   else if (mode === 'recipe') renderRecipe();
   else if (mode === 'recipeEdit') renderRecipeEdit();
   else if (mode === 'fridge') renderFridge();
+  else if (mode === 'deals') renderDeals();
   else renderHistory();
   updateDock();
   window.scrollTo(0, 0);
@@ -1948,7 +2186,7 @@ document.getElementById('switchBtn').onclick = () => {
   if (mode === 'recipeEdit') return saveRecipe();
   if (mode === 'recipe') return addRecipeToList();
   if (mode === 'fridge') return saveFridge();
-  if (mode === 'recipes') return setMode(neededCount() ? 'list' : 'inventory');
+  if (mode === 'recipes' || mode === 'deals') return setMode(neededCount() ? 'list' : 'inventory');
   setMode(mode === 'inventory' ? 'list' : 'inventory');
 };
 document.getElementById('historyBtn').onclick = () => setMode('history');
@@ -2009,6 +2247,8 @@ if (draft && Array.isArray(draft.lines)) setMode('receipt');
 else if (rdraft) { draft = null; setMode('recipeEdit'); }
 else if (fdraft) { draft = null; setMode('fridge'); }
 else { draft = null; renderInventory(); updateDock(); }
+
+setTimeout(autoRefreshAds, 1500);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

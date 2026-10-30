@@ -237,6 +237,57 @@
     return { need: true, why: '' };
   }
 
+  // ---------- Weekly ads ----------
+  function adDay(str) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(str || '');
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : null;
+  }
+  function adCurrent(ad, now) {
+    const from = adDay(ad.from), to = adDay(ad.to);
+    const end = to ? to + DAY : (ad.fetched || 0) + 7 * DAY;
+    return now < end && (!from || now >= from);
+  }
+
+  // Which item a deal is for: the matched staple, else its plain name.
+  function dealItem(state, d) {
+    const low = {};
+    state.sections.forEach(sec => sec.items.forEach(i => { low[i.toLowerCase()] = i; }));
+    return low[String(d.match || '').toLowerCase()] || low[String(d.name || '').toLowerCase()] || String(d.name || d.item || '').trim();
+  }
+
+  // item name -> [{store, price, unit, price_text, note, item}] from ads running now.
+  function activeDeals(state, now) {
+    now = now || Date.now();
+    const out = new Map();
+    Object.values(state.ads || {}).forEach(ad => {
+      if (!ad || !Array.isArray(ad.deals) || !adCurrent(ad, now)) return;
+      ad.deals.forEach(d => {
+        const name = dealItem(state, d);
+        if (!name) return;
+        if (!out.has(name)) out.set(name, []);
+        out.get(name).push({ ...d, store: ad.storeShort || ad.store });
+      });
+    });
+    return out;
+  }
+
+  // "Sale $2.99/lb at Dave's · you paid $3.99", or ''.
+  function saleText(state, name, now, sales) {
+    const ds = (sales || activeDeals(state, now)).get(name);
+    if (!ds) return '';
+    const d = ds[0];
+    let t = `Sale ${d.price_text} at ${d.store}`;
+    const lp = lastPrice(state.history, name);
+    if (lp && d.price > 0) {
+      let paid = null;
+      if (d.unit === 'lb' && lp.unit === 'lb' && lp.unitPrice) paid = lp.unitPrice;
+      else if (d.unit === 'ea' && (!lp.unit || lp.unit === 'ea')) paid = lp.price / (lp.qty || 1);
+      if (paid) t += ` · you paid $${paid.toFixed(2)}${d.unit === 'lb' ? '/lb' : ''}`;
+    }
+    if (ds.length > 1) t += ` · +${ds.length - 1} more`;
+    return t;
+  }
+
   function analyze(state, now) {
     now = now || Date.now();
     const month = new Date(now).getMonth() + 1;
@@ -261,6 +312,7 @@
 
     // 2. Suggestions.
     const suggestions = [];
+    const ratios = new Map(); // how far through its usual rhythm each item is
     for (const [name, all] of buys) {
       if (!sectionOf.has(name)) continue;
       const dates = all.filter(d => now - d <= 365 * DAY);
@@ -290,6 +342,7 @@
 
       const since = (now - days[n - 1]) / DAY;
       const ratio = since / (interval * stock);
+      ratios.set(name, { ratio, n });
       const due = dueCurve(ratio);
       if (!due) continue;
 
@@ -331,6 +384,30 @@
       });
     }
 
+    // Sales. A sale nudges things you actually buy; it never pushes
+    // something you don't. Things that keep get a "stock up" suggestion a
+    // little early; fresh things only when you're nearly due anyway.
+    const sales = activeDeals(state, now);
+    for (const sg of suggestions) {
+      const d = sales.get(sg.name);
+      if (!d) continue;
+      sg.score *= 1.25;
+      sg.sale = true;
+      sg.reason += ` · on sale ${d[0].price_text} at ${d[0].store}`;
+    }
+    for (const [name, ds] of sales) {
+      if (!sectionOf.has(name) || suggestions.some(x => x.name === name)) continue;
+      const r = ratios.get(name);
+      if (!r) continue;
+      const lasting = LASTING.test(sectionOf.get(name));
+      const d = ds[0];
+      if (lasting && r.ratio >= 0.25) {
+        suggestions.push({ name, section: sectionOf.get(name), score: 0.42, sale: true, reason: `On sale ${d.price_text} at ${d.store} · good time to stock up` });
+      } else if (!lasting && r.ratio >= 0.5) {
+        suggestions.push({ name, section: sectionOf.get(name), score: 0.41, sale: true, reason: `On sale ${d.price_text} at ${d.store} · you're due soon` });
+      }
+    }
+
     suggestions.sort((a, b) => b.score - a.score);
     suggestions.length = Math.min(suggestions.length, 8);
 
@@ -366,7 +443,7 @@
       .map(x => x.name);
   }
 
-  const api = { analyze, sortItems, seasonOf, lastPrice, recipeNeed };
+  const api = { analyze, sortItems, seasonOf, lastPrice, recipeNeed, activeDeals, saleText, dealItem };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Suggest = api;
 })(typeof self !== 'undefined' ? self : this);
