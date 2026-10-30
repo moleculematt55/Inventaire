@@ -36,15 +36,15 @@
         items: {
           type: 'object',
           properties: {
-            item: { type: 'string', description: 'The item as advertised, with brand and size, e.g. "Cabot Sharp Cheddar, 8 oz".' },
+            item: { type: 'string', description: 'The item as advertised, short: brand, product and size in a few words, e.g. "Cabot Sharp Cheddar 8 oz".' },
             name: { type: 'string', description: 'Generic shopping-list name, e.g. "Cheddar", "Chicken thighs", "Coffee".' },
-            match: { type: 'string', description: 'Exactly one of the shopper\'s staple names (copied character for character) if this deal is for that item, else "". Brand and size don\'t matter: "Folgers Classic Roast" is "Coffee", "Boneless chicken breast" is "Chicken".' },
+            match: { type: 'string', description: 'Exactly one of the shopper\'s staple names (copied character for character) only if this deal is that same product, else "". Brand and size don\'t matter ("Folgers Classic Roast" is "Coffee", "Boneless chicken breast" is "Chicken"), but a different product in the same family is not a match: provolone is not "Cheddar", ham is not "Bacon", sparkling water is not "Coffee".' },
             section: { type: 'string', description: 'Best category, chosen from the shopper\'s category names.' },
             price: { type: 'number', description: 'Sale price for one unit (per lb when sold by weight). "2 for $5" is 2.5. 0 if there is no single price, e.g. buy one get one.' },
             unit: { type: 'string', enum: ['ea', 'lb', ''], description: '"lb" if priced by weight, "ea" if per item or package, "" if no single price.' },
             price_text: { type: 'string', description: 'The deal as a shopper would say it, short: "$2.99/lb", "2 for $5", "Buy 1 get 1 free", "$3.49 with 4".' },
             regular_price: { type: 'number', description: 'Regular price per unit if printed, else 0.' },
-            note: { type: 'string', description: 'Conditions worth knowing, short: "limit 2", "when you buy 4", "Tue & Wed only". Else "".' }
+            note: { type: 'string', description: 'Conditions worth knowing, a few words: "limit 2", "when you buy 4", "Tue & Wed only". Else "".' }
           },
           required: ['item', 'name', 'match', 'section', 'price', 'unit', 'price_text', 'regular_price', 'note'],
           additionalProperties: false
@@ -74,7 +74,7 @@ ${staples}`;
   async function read(store, sections) {
     const today = new Date().toLocaleDateString('en-CA');
     const go = () => Claude.ask({
-      files: [], schema: SCHEMA, what: 'ad', tools: TOOLS, maxTokens: 20000, stream: true,
+      files: [], schema: SCHEMA, what: 'ad', tools: TOOLS, maxTokens: 64000, stream: true,
       prompt: () => buildPrompt(store, sections, today)
     });
     let out;
@@ -90,7 +90,7 @@ ${staples}`;
   async function readFiles(store, files, sections) {
     const today = new Date().toLocaleDateString('en-CA');
     const out = await Claude.ask({
-      files, slice: false, schema: SCHEMA, what: 'ad', maxTokens: 20000, stream: true,
+      files, slice: false, schema: SCHEMA, what: 'ad', maxTokens: 64000, stream: true,
       prompt: n => `Today is ${today}. ${n > 1 ? 'These files are' : 'This is'} the weekly ad for ${store.name}. Read every page.
 
 The flyer layout is visual, so pair each price with the item it sits next to; don't guess when a price can't be tied to an item. Skip alcohol, gift cards, and store announcements. Give the sale's real dates as printed. If this isn't a store ad, set found to false.

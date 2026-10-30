@@ -1940,8 +1940,13 @@ async function fetchAd(st, files) {
 }
 
 // Keep the screen on during a long read; a sleeping phone drops the connection.
+// Never waits more than a second for it: the read matters more than the lock.
 async function keepAwake() {
-  try { return navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (e) { return null; }
+  if (!navigator.wakeLock) return null;
+  const req = navigator.wakeLock.request('screen').catch(() => null);
+  const lock = await Promise.race([req, new Promise(r => setTimeout(() => r(null), 1000))]);
+  if (!lock) req.then(l => l && l.release().catch(() => {})); // arrived late: don't hold it
+  return lock;
 }
 
 let adFileStore = null;
