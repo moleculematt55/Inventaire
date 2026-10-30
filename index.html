@@ -1980,9 +1980,17 @@ function adStale(st, now) {
   return !ad || now >= Deals.endsAt(ad);
 }
 
-async function refreshAds() {
-  const stores = enabledStores();
-  if (!stores.length) { openStoreSheet(); return; }
+// Reads ads that are missing or have ended (or just `only`, to read one
+// store again). Stores whose current ad is already loaded are skipped, so a
+// second tap doesn't spend money re-reading the same flyer.
+async function refreshAds(only) {
+  if (!enabledStores().length) { openStoreSheet(); return; }
+  const now = Date.now();
+  const stores = only ? [only] : enabledStores().filter(st => adStale(st, now));
+  if (!stores.length) {
+    toast('You already have this week\'s ads. Use Read again under a store for a fresh copy.');
+    return;
+  }
   if (!Claude.getKey()) {
     const ok = await openKeySheet();
     if (!ok || !Claude.getKey()) return;
@@ -1994,15 +2002,16 @@ async function refreshAds() {
     try { const n = await fetchAd(st); done.push(`${shortStore(st.name)}: ${plural(n, 'staple')} on sale`); }
     catch (err) {
       if (err && (err.code === 'nokey' || err.code === 'badkey' || err.code === 'credit' || err.code === 'offline')) { busy.close(); if (lock) lock.release().catch(() => {}); showAIError(err, 'ad'); renderDeals(); return; }
-      failed.push(`${st.name}: ${(err && err.message) || 'something went wrong'}`);
+      failed.push({ id: st.id, name: st.name, text: `${st.name}: ${(err && err.message) || 'something went wrong'}` });
     }
     busy.close();
   }
   if (lock) lock.release().catch(() => {});
   if (mode === 'deals') renderDeals(); else if (mode === 'inventory') renderInventory();
   if (failed.length) {
-    await confirmSheet({ title: done.length ? 'Some ads couldn\'t be read' : 'Couldn\'t read the ads', body: failed.map(f => `<p>${esc(f)}</p>`).join('') + (done.length ? `<p>${esc(done.join(' · '))}</p>` : '')
-      + `<p>You can also save the ad from the store's website or email (a PDF or screenshots) and use <b>Add ad from a file</b> under that store.</p>`, yes: 'OK', no: false });
+    await confirmSheet({ title: done.length ? 'Some ads couldn\'t be read' : 'Couldn\'t read the ads', body: failed.map(f => `<p>${esc(f.text)}</p>`).join('') + (done.length ? `<p>${esc(done.join(' · '))}</p>` : '')
+      + (failed.some(f => state.ads[f.id]) ? `<p>Your last ad from ${esc(failed.filter(f => state.ads[f.id]).map(f => shortStore(f.name)).join(' and '))} is still saved.</p>` : '')
+      + `<p>Try again later, or save the ad from the store's website or email (a PDF or screenshots) and use <b>Add ad from a file</b> under that store.</p>`, yes: 'OK', no: false });
   } else if (done.length) toast(done.join(' · '));
 }
 
@@ -2122,7 +2131,14 @@ function renderDeals() {
       if (collapsed) box.ontoggle = () => { box.open ? openDealGroups.add(st.id) : openDealGroups.delete(st.id); };
       el.appendChild(box);
     };
-    el.appendChild(fileBtn);
+    const again = document.createElement('button');
+    again.className = 'btn quiet store-file'; again.type = 'button';
+    again.textContent = 'Read again';
+    again.onclick = () => refreshAds(st);
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.appendChild(again); row.appendChild(fileBtn);
+    el.appendChild(row);
     block('On your staples', mine, false);
     block('Everything else in the ad', rest, true);
     if (!mine.length) {
@@ -2136,7 +2152,7 @@ function renderDeals() {
 const openDealGroups = new Set();
 
 document.getElementById('dealsBtn').onclick = () => setMode('deals');
-document.getElementById('refreshAdsBtn').onclick = refreshAds;
+document.getElementById('refreshAdsBtn').onclick = () => refreshAds();
 document.getElementById('storesBtn').onclick = openStoreSheet;
 
 function listAsText() {
